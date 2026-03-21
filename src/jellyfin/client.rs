@@ -6,7 +6,7 @@ use crate::{config::ServerConfig, error::AppError};
 use super::models::{
     AuthenticateUserByName, AuthenticationResult, BaseItemDto, BaseItemDtoQueryResult, PlaybackInfoRequest,
     PlaybackInfoResponse, PlaybackProgressInfo, PlaybackStartInfo, PlaybackStopInfo, PublicSystemInfo,
-    SearchHintResult, TaskInfo, UserDto,
+    SearchHintResult, TaskInfo, UserDto, VirtualFolderInfo,
 };
 
 const CLIENT_DEVICE: &str = "slimjelly";
@@ -200,6 +200,32 @@ impl JellyfinClient {
         self.get_json_owned("Items", &params).await
     }
 
+    pub async fn random_item_by_types(
+        &self,
+        user_id: &str,
+        include_types: &[&str],
+        limit: i32,
+    ) -> Result<BaseItemDtoQueryResult, AppError> {
+        let mut params = vec![
+            ("userId".to_string(), user_id.to_string()),
+            ("recursive".to_string(), "true".to_string()),
+            ("enableImages".to_string(), "true".to_string()),
+            ("imageTypeLimit".to_string(), "1".to_string()),
+            ("sortBy".to_string(), "Random".to_string()),
+            ("sortOrder".to_string(), "Ascending".to_string()),
+            ("limit".to_string(), limit.to_string()),
+        ];
+
+        if !include_types.is_empty() {
+            params.push((
+                "includeItemTypes".to_string(),
+                include_types.join(","),
+            ));
+        }
+
+        self.get_json_owned("Items", &params).await
+    }
+
     pub async fn library_items_by_types(
         &self,
         user_id: &str,
@@ -248,6 +274,48 @@ impl JellyfinClient {
     pub async fn mark_played(&self, user_id: &str, item_id: &str) -> Result<(), AppError> {
         let path = format!("Users/{user_id}/PlayedItems/{item_id}");
         self.post_no_body_no_content(&path, &[]).await
+    }
+
+    pub async fn mark_unplayed(&self, user_id: &str, item_id: &str) -> Result<(), AppError> {
+        let path = format!("UserPlayedItems/{item_id}");
+        self.delete_no_body_no_content(&path, &[("userId", user_id)])
+            .await
+    }
+
+    pub async fn add_items_to_playlist(
+        &self,
+        playlist_id: &str,
+        user_id: &str,
+        item_ids: &[&str],
+    ) -> Result<(), AppError> {
+        let path = format!("Playlists/{playlist_id}/Items");
+        let ids = item_ids.join(",");
+        self.post_no_body_no_content(&path, &[("userId", user_id), ("ids", &ids)])
+            .await
+    }
+
+    pub async fn delete_item(&self, item_id: &str) -> Result<(), AppError> {
+        let path = format!("Items/{item_id}");
+        self.delete_no_body_no_content(&path, &[]).await
+    }
+
+    pub async fn virtual_folders(&self) -> Result<Vec<VirtualFolderInfo>, AppError> {
+        self.get_json("Library/VirtualFolders", &[]).await
+    }
+
+    pub async fn remove_virtual_folder(
+        &self,
+        name: &str,
+        refresh_library: bool,
+    ) -> Result<(), AppError> {
+        self.delete_no_body_no_content(
+            "Library/VirtualFolders",
+            &[
+                ("name", name),
+                ("refreshLibrary", if refresh_library { "true" } else { "false" }),
+            ],
+        )
+        .await
     }
 
     pub async fn seasons(
@@ -540,6 +608,18 @@ impl JellyfinClient {
         query: &[(&str, &str)],
     ) -> Result<(), AppError> {
         let mut req = self.client.post(self.make_url(path)?).query(query);
+        req = self.with_auth(req);
+
+        let response = req.send().await?;
+        parse_empty_response(response).await
+    }
+
+    async fn delete_no_body_no_content(
+        &self,
+        path: &str,
+        query: &[(&str, &str)],
+    ) -> Result<(), AppError> {
+        let mut req = self.client.delete(self.make_url(path)?).query(query);
         req = self.with_auth(req);
 
         let response = req.send().await?;

@@ -17,7 +17,7 @@ use crate::{
         JellyfinClient,
         models::{
             BaseItemDto, BaseItemDtoQueryResult, MediaSourceInfo, PublicSystemInfo, SearchHint,
-            TaskInfo,
+            TaskInfo, VirtualFolderInfo,
         },
     },
     secure_store::load_session,
@@ -95,6 +95,8 @@ enum UiMessage {
     LibraryItemsFailed(String),
     CollectionItemsLoaded(Vec<BaseItemDto>),
     CollectionItemsFailed(String),
+    VirtualFoldersLoaded(Vec<VirtualFolderInfo>),
+    VirtualFoldersFailed(String),
     DetailSeasonsLoaded(Vec<BaseItemDto>),
     DetailSeasonsFailed(String),
     DetailEpisodesLoaded {
@@ -148,10 +150,29 @@ enum UiMessage {
     TasksFailed(String),
     ActionDone(String),
     ActionFailed(String),
+    ShuffleItemReady(BaseItemDto),
+    ShuffleItemFailed(String),
+    PlaylistAddDone {
+        playlist_id: String,
+        item_id: String,
+    },
+    PlaylistAddFailed(String),
     MarkPlayedDone {
         item_id: String,
     },
     MarkPlayedFailed(String),
+    MarkUnplayedDone {
+        item_id: String,
+    },
+    MarkUnplayedFailed(String),
+    DeleteItemDone {
+        item_id: String,
+    },
+    DeleteItemFailed(String),
+    DeleteLibraryDone {
+        name: String,
+    },
+    DeleteLibraryFailed(String),
 }
 
 #[derive(Debug, Clone)]
@@ -187,7 +208,6 @@ pub struct SlimJellyApp {
     current_screen: Screen,
     detail_return_screen: Screen,
     current_library_section: LibrarySection,
-    sidebar_expanded: bool,
     sidebar_width: f32,
     hero_index: usize,
     login_password: String,
@@ -225,6 +245,10 @@ pub struct SlimJellyApp {
 
     tasks: Vec<TaskInfo>,
     selected_library_id: String,
+    admin_virtual_folders: Vec<VirtualFolderInfo>,
+    admin_selected_virtual_folder_name: Option<String>,
+    admin_delete_item_confirm: String,
+    admin_delete_library_confirm: String,
 
     playback: Option<PlaybackView>,
 }
@@ -242,8 +266,7 @@ impl SlimJellyApp {
             current_screen: Screen::Login,
             detail_return_screen: Screen::Home,
             current_library_section: LibrarySection::Movies,
-            sidebar_expanded: false,
-            sidebar_width: 68.0,
+            sidebar_width: 236.0,
             hero_index: 0,
             login_password: String::new(),
             status_line: "Ready".to_string(),
@@ -276,6 +299,10 @@ impl SlimJellyApp {
             thumbnail_failed: std::collections::HashSet::new(),
             tasks: Vec::new(),
             selected_library_id: String::new(),
+            admin_virtual_folders: Vec::new(),
+            admin_selected_virtual_folder_name: None,
+            admin_delete_item_confirm: String::new(),
+            admin_delete_library_confirm: String::new(),
             playback: None,
         };
 
@@ -409,6 +436,18 @@ impl SlimJellyApp {
         } else {
             (elapsed_seconds as i64).saturating_mul(10_000_000)
         }
+    }
+
+    fn pseudo_random_index(len: usize) -> usize {
+        if len <= 1 {
+            return 0;
+        }
+
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos() as usize)
+            .unwrap_or(0);
+        nanos % len
     }
 }
 

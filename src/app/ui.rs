@@ -147,6 +147,26 @@ impl SlimJellyApp {
                 UiMessage::CollectionItemsFailed(message) => {
                     self.status_line = format!("Collection load failed: {message}");
                 }
+                UiMessage::VirtualFoldersLoaded(folders) => {
+                    self.admin_virtual_folders = folders;
+                    let selected_still_exists = self
+                        .admin_selected_virtual_folder_name
+                        .as_deref()
+                        .map(|selected| {
+                            self.admin_virtual_folders
+                                .iter()
+                                .any(|folder| folder.name.as_deref() == Some(selected))
+                        })
+                        .unwrap_or(false);
+
+                    if !selected_still_exists {
+                        self.admin_selected_virtual_folder_name =
+                            self.admin_virtual_folders.first().and_then(|folder| folder.name.clone());
+                    }
+                }
+                UiMessage::VirtualFoldersFailed(message) => {
+                    self.status_line = format!("Virtual folder load failed: {message}");
+                }
                 UiMessage::DetailSeasonsLoaded(seasons) => {
                     self.detail_seasons = seasons;
 
@@ -353,6 +373,28 @@ impl SlimJellyApp {
                 UiMessage::ActionFailed(message) => {
                     self.status_line = format!("Action failed: {message}");
                 }
+                UiMessage::ShuffleItemReady(item) => {
+                    self.selected_item = Some(item);
+                    self.start_playback();
+                }
+                UiMessage::ShuffleItemFailed(message) => {
+                    self.status_line = format!("Shuffle failed: {message}");
+                }
+                UiMessage::PlaylistAddDone {
+                    playlist_id,
+                    item_id,
+                } => {
+                    self.status_line = "Added item to playlist".to_string();
+                    self.selected_playlist_id = Some(playlist_id.clone());
+                    self.load_playlist_items(playlist_id);
+
+                    if self.current_screen == Screen::Details {
+                        self.load_item_detail(item_id);
+                    }
+                }
+                UiMessage::PlaylistAddFailed(message) => {
+                    self.status_line = format!("Add to playlist failed: {message}");
+                }
                 UiMessage::MarkPlayedDone { item_id } => {
                     self.status_line = "Marked played".to_string();
                     if self.current_screen == Screen::Details {
@@ -367,25 +409,87 @@ impl SlimJellyApp {
                 UiMessage::MarkPlayedFailed(message) => {
                     self.status_line = format!("Mark played failed: {message}");
                 }
+                UiMessage::MarkUnplayedDone { item_id } => {
+                    self.status_line = "Marked unplayed".to_string();
+                    if self.current_screen == Screen::Details {
+                        self.load_item_detail(item_id);
+                    }
+                    self.load_home_sections();
+                    self.load_last_played();
+                    if self.current_screen == Screen::Libraries {
+                        self.load_library_items(self.current_library_section);
+                    }
+                }
+                UiMessage::MarkUnplayedFailed(message) => {
+                    self.status_line = format!("Mark unplayed failed: {message}");
+                }
+                UiMessage::DeleteItemDone { item_id } => {
+                    self.status_line = "Item deleted".to_string();
+                    self.admin_delete_item_confirm.clear();
+                    self.home_continue_watching.retain(|item| item.id.as_deref() != Some(item_id.as_str()));
+                    self.home_recent_movies.retain(|item| item.id.as_deref() != Some(item_id.as_str()));
+                    self.home_recent_series.retain(|item| item.id.as_deref() != Some(item_id.as_str()));
+                    self.library_items.retain(|item| item.id.as_deref() != Some(item_id.as_str()));
+                    self.collection_items.retain(|item| item.id.as_deref() != Some(item_id.as_str()));
+                    self.items.retain(|item| item.id.as_deref() != Some(item_id.as_str()));
+                    self.playlist_items.retain(|item| item.id.as_deref() != Some(item_id.as_str()));
+                    self.detail_related.retain(|item| item.id.as_deref() != Some(item_id.as_str()));
+                    self.detail_episodes.retain(|item| item.id.as_deref() != Some(item_id.as_str()));
+
+                    if self.selected_item.as_ref().and_then(|item| item.id.as_ref())
+                        == Some(&item_id)
+                    {
+                        self.selected_item = None;
+                        self.current_screen = Screen::Admin;
+                    }
+
+                    self.load_home_sections();
+                    self.load_library_items(self.current_library_section);
+                    self.load_collections();
+                    self.search_items();
+                    self.load_playlists();
+                    self.load_last_played();
+                }
+                UiMessage::DeleteItemFailed(message) => {
+                    self.status_line = format!("Delete item failed: {message}");
+                }
+                UiMessage::DeleteLibraryDone { name } => {
+                    self.status_line = format!("Library '{name}' deleted");
+                    self.admin_delete_library_confirm.clear();
+                    self.admin_virtual_folders
+                        .retain(|folder| folder.name.as_deref() != Some(name.as_str()));
+                    if self
+                        .admin_selected_virtual_folder_name
+                        .as_deref()
+                        == Some(name.as_str())
+                    {
+                        self.admin_selected_virtual_folder_name = self
+                            .admin_virtual_folders
+                            .first()
+                            .and_then(|folder| folder.name.clone());
+                    }
+
+                    self.load_virtual_folders();
+                    self.load_views();
+                    self.load_library_items(self.current_library_section);
+                    self.load_collections();
+                    self.search_items();
+                }
+                UiMessage::DeleteLibraryFailed(message) => {
+                    self.status_line = format!("Delete library failed: {message}");
+                }
             }
         }
     }
 
     pub(super) fn draw_app_shell(&mut self, ctx: &egui::Context) {
-        let sidebar_response = egui::SidePanel::left("main_sidebar")
+        self.sidebar_width = 236.0;
+        egui::SidePanel::left("main_sidebar")
             .resizable(false)
             .exact_width(self.sidebar_width)
             .show(ctx, |ui| {
                 self.draw_sidebar(ui);
             });
-
-        let pointer_near_sidebar = ctx
-            .input(|i| i.pointer.latest_pos())
-            .map(|pos| pos.x <= self.sidebar_width + 6.0)
-            .unwrap_or(false);
-
-        self.sidebar_expanded = sidebar_response.response.hovered() || pointer_near_sidebar;
-        self.animate_sidebar_width(ctx);
 
         egui::CentralPanel::default().show(ctx, |ui| {
             self.draw_now_playing_strip(ui);
@@ -405,69 +509,45 @@ impl SlimJellyApp {
         });
     }
 
-    fn animate_sidebar_width(&mut self, ctx: &egui::Context) {
-        let target = if self.sidebar_expanded { 236.0 } else { 68.0 };
-        let dt = ctx.input(|i| i.stable_dt).clamp(1.0 / 240.0, 1.0 / 24.0);
-        let speed = if self.sidebar_expanded { 16.0 } else { 11.0 };
-        let blend = 1.0 - (-speed * dt).exp();
-
-        self.sidebar_width = egui::lerp(self.sidebar_width..=target, blend).clamp(68.0, 236.0);
-    }
-
     fn draw_sidebar(&mut self, ui: &mut egui::Ui) {
         ui.add_space(6.0);
 
         egui::Frame::group(ui.style()).show(ui, |ui| {
-            if self.sidebar_expanded {
-                ui.label(RichText::new("slimjelly").strong().size(18.0));
-                if let Some(session) = &self.session {
-                    ui.label(RichText::new(&session.user_name).weak());
-                }
-            } else {
-                ui.label(RichText::new("sj").strong());
+            ui.label(RichText::new("slimjelly").strong().size(18.0));
+            if let Some(session) = &self.session {
+                ui.label(RichText::new(&session.user_name).weak());
             }
         });
 
         ui.add_space(8.0);
-        self.sidebar_nav_button(ui, "HM", "Home", Screen::Home);
-        self.sidebar_nav_button(ui, "SR", "Search", Screen::Search);
+        self.sidebar_nav_button(ui, "🏠 Home", Screen::Home);
+        self.sidebar_nav_button(ui, "🔍 Search", Screen::Search);
 
         ui.add_space(4.0);
-        if self.sidebar_expanded {
-            ui.label(RichText::new("Libraries").weak());
-        }
+        ui.label(RichText::new("Libraries").weak());
 
-        self.sidebar_library_button(ui, "MV", "Movies", LibrarySection::Movies);
-        self.sidebar_library_button(ui, "TV", "TV Shows", LibrarySection::TvShows);
-        self.sidebar_library_button(ui, "MU", "Music", LibrarySection::Music);
-        self.sidebar_library_button(ui, "AB", "Audiobooks", LibrarySection::Audiobooks);
+        self.sidebar_library_button(ui, "🎬 Movies", LibrarySection::Movies);
+        self.sidebar_library_button(ui, "📺 TV Shows", LibrarySection::TvShows);
+        self.sidebar_library_button(ui, "🎵 Music", LibrarySection::Music);
+        self.sidebar_library_button(ui, "📚 Audiobooks", LibrarySection::Audiobooks);
 
         ui.add_space(4.0);
-        self.sidebar_nav_button(ui, "CL", "Collections", Screen::Collections);
-        self.sidebar_nav_button(ui, "PL", "Playlists", Screen::Playlists);
+        self.sidebar_nav_button(ui, "📁 Collections", Screen::Collections);
+        self.sidebar_nav_button(ui, "📜 Playlists", Screen::Playlists);
 
         ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-            if ui.button(self.sidebar_label("LO", "Logout")).clicked() {
+            if ui.button("🚪 Logout").clicked() {
                 self.do_logout();
             }
 
-            self.sidebar_nav_button(ui, "ST", "Settings", Screen::Settings);
+            self.sidebar_nav_button(ui, "🔧 Settings", Screen::Settings);
             if self.session.as_ref().map(|s| s.is_admin).unwrap_or(false) {
-                self.sidebar_nav_button(ui, "DB", "Dashboard", Screen::Admin);
+                self.sidebar_nav_button(ui, "⚙️ Dashboard", Screen::Admin);
             }
         });
     }
 
-    fn sidebar_label(&self, compact: &str, expanded: &str) -> String {
-        if self.sidebar_expanded {
-            expanded.to_string()
-        } else {
-            compact.to_string()
-        }
-    }
-
-    fn sidebar_nav_button(&mut self, ui: &mut egui::Ui, compact: &str, expanded: &str, screen: Screen) {
-        let text = self.sidebar_label(compact, expanded);
+    fn sidebar_nav_button(&mut self, ui: &mut egui::Ui, label: &str, screen: Screen) {
         let selected = self.current_screen == screen;
         let fill = if selected {
             Color32::from_rgb(78, 28, 38)
@@ -475,7 +555,7 @@ impl SlimJellyApp {
             Color32::TRANSPARENT
         };
 
-        let button = egui::Button::new(text)
+        let button = egui::Button::new(label)
             .fill(fill)
             .min_size(egui::vec2(ui.available_width(), 28.0));
         if ui.add(button).clicked() {
@@ -486,11 +566,9 @@ impl SlimJellyApp {
     fn sidebar_library_button(
         &mut self,
         ui: &mut egui::Ui,
-        compact: &str,
-        expanded: &str,
+        label: &str,
         section: LibrarySection,
     ) {
-        let text = self.sidebar_label(compact, expanded);
         let selected =
             self.current_screen == Screen::Libraries && self.current_library_section == section;
         let fill = if selected {
@@ -499,7 +577,7 @@ impl SlimJellyApp {
             Color32::TRANSPARENT
         };
 
-        let button = egui::Button::new(text)
+        let button = egui::Button::new(label)
             .fill(fill)
             .min_size(egui::vec2(ui.available_width(), 28.0));
         if ui.add(button).clicked() {
@@ -560,13 +638,14 @@ impl SlimJellyApp {
                     ui.add_space(10.0);
 
                     ui.label(RichText::new("Server URL").small().strong());
-                    ui.text_edit_singleline(&mut self.config.server.base_url);
+                    let url_resp = ui.text_edit_singleline(&mut self.config.server.base_url);
 
                     ui.label(RichText::new("Username").small().strong());
-                    ui.text_edit_singleline(&mut self.config.server.username);
+                    let user_resp = ui.text_edit_singleline(&mut self.config.server.username);
 
                     ui.label(RichText::new("Password").small().strong());
-                    ui.add(egui::TextEdit::singleline(&mut self.login_password).password(true));
+                    let pass_resp =
+                        ui.add(egui::TextEdit::singleline(&mut self.login_password).password(true));
 
                     ui.checkbox(
                         &mut self.config.server.allow_self_signed,
@@ -589,6 +668,12 @@ impl SlimJellyApp {
                             self.do_login();
                         }
                     });
+
+                    let enter_pressed = ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    let input_focused = url_resp.has_focus() || user_resp.has_focus() || pass_resp.has_focus();
+                    if enter_pressed && input_focused {
+                        self.do_login();
+                    }
                 });
         });
     }
@@ -1172,11 +1257,11 @@ impl SlimJellyApp {
                 egui::TextEdit::singleline(&mut self.search_term)
                     .hint_text("Search movies, shows, audio, collections..."),
             );
-            if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            if response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                 self.search_items();
             }
 
-            if ui.button("Run").clicked() {
+            if ui.button("Search").clicked() {
                 self.search_items();
             }
         });
@@ -1235,7 +1320,7 @@ impl SlimJellyApp {
     fn draw_collections(&mut self, ui: &mut egui::Ui) {
         self.draw_screen_header(ui, "Collections", "Grouped media sets and curated bundles.");
         ui.horizontal(|ui| {
-            if ui.button("Reload Collections").clicked() {
+            if ui.button("Refresh Collections").clicked() {
                 self.load_collections();
             }
         });
@@ -1249,7 +1334,7 @@ impl SlimJellyApp {
         self.draw_screen_header(ui, "Playlists", "Open playlists and browse their media items.");
 
         ui.horizontal(|ui| {
-            if ui.button("Reload Playlists").clicked() {
+            if ui.button("Refresh Playlists").clicked() {
                 self.load_playlists();
             }
         });
@@ -1463,9 +1548,58 @@ impl SlimJellyApp {
             self.mark_selected_item_played();
         }
 
-        ui.add_enabled(false, egui::Button::new("Shuffle"));
-        ui.add_enabled(false, egui::Button::new("Add to Playlist"));
-        ui.add_enabled(false, egui::Button::new("More"));
+        if ui.button("Shuffle").clicked() {
+            self.selected_item = Some(item.clone());
+            self.shuffle_play_selected_context();
+        }
+
+        ui.menu_button("Add to Playlist", |ui| {
+            if self.playlists.is_empty() {
+                ui.label(RichText::new("No playlists loaded").weak());
+                if ui.button("Refresh Playlists").clicked() {
+                    self.load_playlists();
+                    ui.close_menu();
+                }
+                return;
+            }
+
+            let playlists = self.playlists.clone();
+            for playlist in playlists {
+                let Some(playlist_id) = playlist.id.clone() else {
+                    continue;
+                };
+
+                let label = playlist
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| "Untitled Playlist".to_string());
+                if ui.button(label).clicked() {
+                    self.selected_item = Some(item.clone());
+                    self.add_selected_item_to_playlist(playlist_id);
+                    ui.close_menu();
+                }
+            }
+        });
+
+        ui.menu_button("More", |ui| {
+            if ui.button("Mark Unplayed").clicked() {
+                self.selected_item = Some(item.clone());
+                self.mark_selected_item_unplayed();
+                ui.close_menu();
+            }
+
+            if ui.button("Refresh Metadata").clicked() {
+                if let Some(item_id) = item.id.clone() {
+                    self.refresh_item_by_id(item_id);
+                } else {
+                    self.status_line = "Selected item has no id".to_string();
+                }
+                ui.close_menu();
+            }
+
+            ui.separator();
+            ui.label(RichText::new("Delete is available in Admin only").small().weak());
+        });
     }
 
     fn draw_detail_seasons_section(&mut self, ui: &mut egui::Ui, item: &BaseItemDto) {
@@ -1731,15 +1865,19 @@ impl SlimJellyApp {
             if ui.button("Scan All Libraries").clicked() {
                 self.trigger_scan_all();
             }
-            if ui.button("Reload Tasks").clicked() {
+            if ui.button("Refresh Tasks").clicked() {
                 self.refresh_tasks();
             }
         });
 
         ui.horizontal(|ui| {
             ui.label("Library or Item ID");
-            ui.text_edit_singleline(&mut self.selected_library_id);
-            if ui.button("Refresh One").clicked() {
+            let id_resp = ui.text_edit_singleline(&mut self.selected_library_id);
+            if ui.button("Refresh Item").clicked() {
+                self.trigger_refresh_item();
+            }
+
+            if id_resp.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                 self.trigger_refresh_item();
             }
         });
@@ -1757,6 +1895,110 @@ impl SlimJellyApp {
                 ui.label(format!("{name} | {state} | {progress}"));
             }
         });
+
+        ui.add_space(10.0);
+        ui.separator();
+        ui.label(RichText::new("Danger Zone").strong().color(Color32::from_rgb(210, 78, 95)));
+        ui.label(
+            RichText::new(
+                "Deletes are permanent and can remove files from disk depending on server configuration.",
+            )
+            .small()
+            .weak(),
+        );
+
+        ui.add_space(6.0);
+        egui::Frame::group(ui.style())
+            .stroke(Stroke::new(1.0, Color32::from_rgb(95, 36, 47)))
+            .show(ui, |ui| {
+                ui.label(RichText::new("Delete Item by ID").strong());
+                ui.label(RichText::new("Type DELETE to enable item deletion.").small().weak());
+
+                ui.horizontal(|ui| {
+                    ui.label("Confirm");
+                    ui.text_edit_singleline(&mut self.admin_delete_item_confirm);
+                });
+
+                let can_delete_item = !self.selected_library_id.trim().is_empty()
+                    && self.admin_delete_item_confirm.trim() == "DELETE";
+                if ui
+                    .add_enabled(can_delete_item, egui::Button::new("Delete Item"))
+                    .clicked()
+                {
+                    self.delete_admin_item_by_id(self.selected_library_id.trim().to_string());
+                }
+            });
+
+        ui.add_space(6.0);
+        egui::Frame::group(ui.style())
+            .stroke(Stroke::new(1.0, Color32::from_rgb(95, 36, 47)))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Delete Library").strong());
+                    if ui.button("Refresh Libraries").clicked() {
+                        self.load_virtual_folders();
+                    }
+                });
+
+                if self.admin_virtual_folders.is_empty() {
+                    ui.label(RichText::new("No virtual folders loaded.").weak());
+                    return;
+                }
+
+                ui.horizontal(|ui| {
+                    ui.label("Library");
+                    let selected_name = self
+                        .admin_selected_virtual_folder_name
+                        .clone()
+                        .unwrap_or_else(|| "Select library".to_string());
+                    egui::ComboBox::from_id_salt("admin_virtual_folder_select")
+                        .selected_text(selected_name)
+                        .show_ui(ui, |ui| {
+                            for folder in self.admin_virtual_folders.clone() {
+                                let Some(name) = folder.name.clone() else {
+                                    continue;
+                                };
+                                let selected = self
+                                    .admin_selected_virtual_folder_name
+                                    .as_deref()
+                                    == Some(name.as_str());
+                                if ui.selectable_label(selected, &name).clicked() {
+                                    self.admin_selected_virtual_folder_name = Some(name);
+                                }
+                            }
+                        });
+                });
+
+                let selected_library_name = self
+                    .admin_selected_virtual_folder_name
+                    .clone()
+                    .unwrap_or_default();
+                ui.label(
+                    RichText::new(format!(
+                        "Type library name exactly to confirm: {}",
+                        if selected_library_name.is_empty() {
+                            "(none selected)"
+                        } else {
+                            selected_library_name.as_str()
+                        }
+                    ))
+                    .small()
+                    .weak(),
+                );
+                ui.horizontal(|ui| {
+                    ui.label("Confirm");
+                    ui.text_edit_singleline(&mut self.admin_delete_library_confirm);
+                });
+
+                let can_delete_library = !selected_library_name.is_empty()
+                    && self.admin_delete_library_confirm.trim() == selected_library_name;
+                if ui
+                    .add_enabled(can_delete_library, egui::Button::new("Delete Library"))
+                    .clicked()
+                {
+                    self.delete_admin_virtual_folder(selected_library_name);
+                }
+            });
     }
 
     fn draw_settings(&mut self, ui: &mut egui::Ui) {
@@ -1778,18 +2020,28 @@ impl SlimJellyApp {
         ui.horizontal(|ui| {
             ui.label("mpv path (optional)");
             let mut value = self.config.player.mpv_path.clone().unwrap_or_default();
-            if ui.text_edit_singleline(&mut value).changed() {
+            let response = ui.text_edit_singleline(&mut value);
+            if response.changed() {
                 let trimmed = value.trim().to_string();
                 self.config.player.mpv_path = if trimmed.is_empty() { None } else { Some(trimmed) };
+            }
+
+            if response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                self.save_settings();
             }
         });
 
         ui.horizontal(|ui| {
             ui.label("VLC path (optional)");
             let mut value = self.config.player.vlc_path.clone().unwrap_or_default();
-            if ui.text_edit_singleline(&mut value).changed() {
+            let response = ui.text_edit_singleline(&mut value);
+            if response.changed() {
                 let trimmed = value.trim().to_string();
                 self.config.player.vlc_path = if trimmed.is_empty() { None } else { Some(trimmed) };
+            }
+
+            if response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                self.save_settings();
             }
         });
 

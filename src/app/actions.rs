@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::{
     config::{PreferredPlayer, save_config},
-    jellyfin::models::{PlaybackInfoRequest, PlaybackStartInfo, PlaybackStopInfo},
+    jellyfin::models::{BaseItemDto, PlaybackInfoRequest, PlaybackStartInfo, PlaybackStopInfo},
     secure_store::clear_session,
 };
 
@@ -623,6 +623,255 @@ impl SlimJellyApp {
         });
     }
 
+    pub(super) fn mark_selected_item_unplayed(&mut self) {
+        let Some(item) = self.selected_item.clone() else {
+            self.status_line = "Select an item first".to_string();
+            return;
+        };
+        let Some(item_id) = item.id else {
+            self.status_line = "Selected item has no id".to_string();
+            return;
+        };
+        let Some(session) = self.session.clone() else {
+            return;
+        };
+        let Some(client) = self.active_client() else {
+            return;
+        };
+
+        self.status_line = "Marking as unplayed...".to_string();
+        let messages = self.messages.clone();
+        self.runtime.spawn(async move {
+            match client.mark_unplayed(&session.user_id, &item_id).await {
+                Ok(()) => Self::push_message(&messages, UiMessage::MarkUnplayedDone { item_id }),
+                Err(err) => {
+                    Self::push_message(&messages, UiMessage::MarkUnplayedFailed(err.to_string()))
+                }
+            }
+        });
+    }
+
+    pub(super) fn shuffle_play_selected_context(&mut self) {
+        if let Some(item) = self.pick_shuffle_local_item() {
+            self.selected_item = Some(item);
+            self.start_playback();
+            return;
+        }
+
+        let Some(client) = self.active_client() else {
+            self.status_line = "No active session".to_string();
+            return;
+        };
+        let Some(session) = self.session.clone() else {
+            return;
+        };
+
+        let include_types = self
+            .selected_item
+            .as_ref()
+            .and_then(|item| item.r#type.clone())
+            .map(|item_type| vec![item_type])
+            .unwrap_or_else(|| vec!["Movie".to_string(), "Series".to_string(), "Episode".to_string()]);
+        let include_types_owned = include_types.clone();
+
+        self.status_line = "Selecting a random item...".to_string();
+        let messages = self.messages.clone();
+        self.runtime.spawn(async move {
+            let include_types_refs = include_types_owned
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>();
+            match client
+                .random_item_by_types(&session.user_id, &include_types_refs, 1)
+                .await
+            {
+                Ok(result) => {
+                    if let Some(item) = result.items.and_then(|items| items.into_iter().next()) {
+                        Self::push_message(&messages, UiMessage::ShuffleItemReady(item));
+                    } else {
+                        Self::push_message(
+                            &messages,
+                            UiMessage::ShuffleItemFailed("No item available for shuffle".to_string()),
+                        );
+                    }
+                }
+                Err(err) => {
+                    Self::push_message(&messages, UiMessage::ShuffleItemFailed(err.to_string()))
+                }
+            }
+        });
+    }
+
+    fn pick_shuffle_local_item(&self) -> Option<BaseItemDto> {
+        let pick_from = |items: &[BaseItemDto]| -> Option<BaseItemDto> {
+            if items.is_empty() {
+                return None;
+            }
+            let idx = SlimJellyApp::pseudo_random_index(items.len());
+            items.get(idx).cloned()
+        };
+
+        let selected_type = self
+            .selected_item
+            .as_ref()
+            .and_then(|item| item.r#type.as_deref())
+            .map(str::to_ascii_lowercase)
+            .unwrap_or_default();
+
+        if selected_type == "series" {
+            if let Some(item) = pick_from(&self.detail_episodes) {
+                return Some(item);
+            }
+        }
+
+        if let Some(item) = pick_from(&self.playlist_items) {
+            return Some(item);
+        }
+        if let Some(item) = pick_from(&self.detail_related) {
+            return Some(item);
+        }
+
+        match self.current_screen {
+            Screen::Home => pick_from(&self.home_recent_movies)
+                .or_else(|| pick_from(&self.home_recent_series))
+                .or_else(|| pick_from(&self.home_continue_watching)),
+            Screen::Libraries => pick_from(&self.library_items),
+            Screen::Search => pick_from(&self.items),
+            Screen::Collections => pick_from(&self.collection_items),
+            Screen::Playlists => pick_from(&self.playlist_items),
+            Screen::Details => pick_from(&self.detail_related).or_else(|| pick_from(&self.detail_episodes)),
+            Screen::Admin | Screen::Settings | Screen::Login => None,
+        }
+    }
+
+    pub(super) fn add_selected_item_to_playlist(&mut self, playlist_id: String) {
+        let Some(item) = self.selected_item.clone() else {
+            self.status_line = "Select an item first".to_string();
+            return;
+        };
+        let Some(item_id) = item.id else {
+            self.status_line = "Selected item has no id".to_string();
+            return;
+        };
+        let Some(session) = self.session.clone() else {
+            return;
+        };
+        let Some(client) = self.active_client() else {
+            return;
+        };
+
+        let messages = self.messages.clone();
+        self.status_line = "Adding to playlist...".to_string();
+        self.runtime.spawn(async move {
+            match client
+                .add_items_to_playlist(&playlist_id, &session.user_id, &[&item_id])
+                .await
+            {
+                Ok(()) => Self::push_message(
+                    &messages,
+                    UiMessage::PlaylistAddDone {
+                        playlist_id,
+                        item_id,
+                    },
+                ),
+                Err(err) => Self::push_message(&messages, UiMessage::PlaylistAddFailed(err.to_string())),
+            }
+        });
+    }
+
+    pub(super) fn load_virtual_folders(&mut self) {
+        let Some(session) = &self.session else {
+            return;
+        };
+        if !session.is_admin {
+            return;
+        }
+
+        let Some(client) = self.active_client() else {
+            return;
+        };
+
+        let messages = self.messages.clone();
+        self.runtime.spawn(async move {
+            match client.virtual_folders().await {
+                Ok(folders) => Self::push_message(&messages, UiMessage::VirtualFoldersLoaded(folders)),
+                Err(err) => Self::push_message(&messages, UiMessage::VirtualFoldersFailed(err.to_string())),
+            }
+        });
+    }
+
+    pub(super) fn delete_admin_item_by_id(&mut self, item_id: String) {
+        let Some(session) = &self.session else {
+            return;
+        };
+        if !session.is_admin {
+            self.status_line = "Admin privileges required".to_string();
+            return;
+        }
+
+        if item_id.trim().is_empty() {
+            self.status_line = "Enter an item id".to_string();
+            return;
+        }
+
+        let Some(client) = self.active_client() else {
+            return;
+        };
+        let messages = self.messages.clone();
+        self.status_line = "Deleting item...".to_string();
+        self.runtime.spawn(async move {
+            match client.delete_item(&item_id).await {
+                Ok(()) => Self::push_message(&messages, UiMessage::DeleteItemDone { item_id }),
+                Err(err) => Self::push_message(&messages, UiMessage::DeleteItemFailed(err.to_string())),
+            }
+        });
+    }
+
+    pub(super) fn delete_admin_virtual_folder(&mut self, name: String) {
+        let Some(session) = &self.session else {
+            return;
+        };
+        if !session.is_admin {
+            self.status_line = "Admin privileges required".to_string();
+            return;
+        }
+
+        if name.trim().is_empty() {
+            self.status_line = "Select a library".to_string();
+            return;
+        }
+
+        let Some(client) = self.active_client() else {
+            return;
+        };
+        let messages = self.messages.clone();
+        self.status_line = "Deleting library...".to_string();
+        self.runtime.spawn(async move {
+            match client.remove_virtual_folder(&name, true).await {
+                Ok(()) => Self::push_message(&messages, UiMessage::DeleteLibraryDone { name }),
+                Err(err) => Self::push_message(&messages, UiMessage::DeleteLibraryFailed(err.to_string())),
+            }
+        });
+    }
+
+    pub(super) fn refresh_item_by_id(&mut self, item_id: String) {
+        if item_id.trim().is_empty() {
+            self.status_line = "Enter a library/item id".to_string();
+            return;
+        }
+
+        let Some(client) = self.active_client() else {
+            return;
+        };
+        let messages = self.messages.clone();
+        self.runtime.spawn(async move {
+            match client.item_refresh(&item_id).await {
+                Ok(()) => Self::push_message(&messages, UiMessage::ActionDone("Refresh triggered".to_string())),
+                Err(err) => Self::push_message(&messages, UiMessage::ActionFailed(err.to_string())),
+            }
+        });
+    }
+
     pub(super) fn load_item_detail(&mut self, item_id: String) {
         let Some(client) = self.active_client() else {
             return;
@@ -1106,6 +1355,8 @@ impl SlimJellyApp {
                 Err(err) => Self::push_message(&messages, UiMessage::TasksFailed(err.to_string())),
             }
         });
+
+        self.load_virtual_folders();
     }
 
     pub(super) fn trigger_scan_all(&mut self) {
@@ -1123,20 +1374,7 @@ impl SlimJellyApp {
 
     pub(super) fn trigger_refresh_item(&mut self) {
         let item_id = self.selected_library_id.trim().to_string();
-        if item_id.is_empty() {
-            self.status_line = "Enter a library/item id".to_string();
-            return;
-        }
-        let Some(client) = self.active_client() else {
-            return;
-        };
-        let messages = self.messages.clone();
-        self.runtime.spawn(async move {
-            match client.item_refresh(&item_id).await {
-                Ok(()) => Self::push_message(&messages, UiMessage::ActionDone("Refresh triggered".to_string())),
-                Err(err) => Self::push_message(&messages, UiMessage::ActionFailed(err.to_string())),
-            }
-        });
+        self.refresh_item_by_id(item_id);
     }
 
     pub(super) fn save_settings(&mut self) {
@@ -1178,6 +1416,10 @@ impl SlimJellyApp {
         self.views.clear();
         self.selected_item = None;
         self.playback = None;
+        self.admin_virtual_folders.clear();
+        self.admin_selected_virtual_folder_name = None;
+        self.admin_delete_item_confirm.clear();
+        self.admin_delete_library_confirm.clear();
         self.status_line = "Logged out".to_string();
     }
 }

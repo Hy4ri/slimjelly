@@ -191,3 +191,14 @@ pub struct TaskInfo {
     pub current_progress_percentage: Option<f64>,
     pub category: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct VirtualFolderInfo {
+    pub name: Option<String>,
+    pub locations: Option<Vec<String>>,
+    pub collection_type: Option<String>,
+    pub item_id: Option<String>,
+    pub refresh_progress: Option<f64>,
+    pub refresh_status: Option<String>,
+}
