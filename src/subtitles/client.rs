@@ -7,7 +7,7 @@ use super::models::{
 };
 
 const BASE_URL: &str = "https://api.opensubtitles.com/api/v1";
-const USER_AGENT: &str = "slimjelly v0.1.0";
+const USER_AGENT: &str = "slimjelly v0.2.0";
 
 /// HTTP client for the OpenSubtitles REST API.
 #[derive(Debug, Clone)]

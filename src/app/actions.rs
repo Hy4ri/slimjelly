@@ -1101,6 +1101,19 @@ impl SlimJellyApp {
             for arg in args_prefix {
                 cmd.arg(arg);
             }
+
+            if let Some(sub_path) = &self.subtitle_temp_path {
+                match player_kind {
+                    PlayerKind::Mpv => {
+                        cmd.arg(format!("--sub-file={}", sub_path));
+                    }
+                    PlayerKind::Vlc => {
+                        cmd.arg("--sub-file");
+                        cmd.arg(sub_path);
+                    }
+                }
+            }
+
             cmd.arg(&stream_url);
 
             match cmd.spawn() {
