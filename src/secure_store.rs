@@ -161,11 +161,8 @@ mod tests {
             fs::create_dir_all(parent).expect("must create temp parent dir");
         }
 
-        fs::write(
-            &path,
-            br#"{"nonce_b64":"AA==","ciphertext_b64":"AA=="}"#,
-        )
-        .expect("must write corrupt blob");
+        fs::write(&path, br#"{"nonce_b64":"AA==","ciphertext_b64":"AA=="}"#)
+            .expect("must write corrupt blob");
 
         let result = load_session(&path);
         assert!(matches!(

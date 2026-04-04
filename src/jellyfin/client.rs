@@ -4,9 +4,9 @@ use serde::{Serialize, de::DeserializeOwned};
 use crate::{config::ServerConfig, error::AppError};
 
 use super::models::{
-    AuthenticateUserByName, AuthenticationResult, BaseItemDto, BaseItemDtoQueryResult, PlaybackInfoRequest,
-    PlaybackInfoResponse, PlaybackProgressInfo, PlaybackStartInfo, PlaybackStopInfo, PublicSystemInfo,
-    SearchHintResult, TaskInfo, UserDto, VirtualFolderInfo,
+    AuthenticateUserByName, AuthenticationResult, BaseItemDto, BaseItemDtoQueryResult,
+    PlaybackInfoRequest, PlaybackInfoResponse, PlaybackProgressInfo, PlaybackStartInfo,
+    PlaybackStopInfo, PublicSystemInfo, SearchHintResult, TaskInfo, UserDto, VirtualFolderInfo,
 };
 
 const CLIENT_DEVICE: &str = "slimjelly";
@@ -56,7 +56,8 @@ impl JellyfinClient {
             pw: password.to_string(),
         };
 
-        self.post_json("Users/AuthenticateByName", &req, false).await
+        self.post_json("Users/AuthenticateByName", &req, false)
+            .await
     }
 
     pub async fn get_me(&self) -> Result<UserDto, AppError> {
@@ -136,10 +137,7 @@ impl JellyfinClient {
             }
         }
         if !include_item_types.is_empty() {
-            params.push((
-                "includeItemTypes".to_string(),
-                include_item_types.join(","),
-            ));
+            params.push(("includeItemTypes".to_string(), include_item_types.join(",")));
         }
 
         self.get_json_owned("Items", &params).await
@@ -191,10 +189,7 @@ impl JellyfinClient {
         ];
 
         if !include_types.is_empty() {
-            params.push((
-                "includeItemTypes".to_string(),
-                include_types.join(","),
-            ));
+            params.push(("includeItemTypes".to_string(), include_types.join(",")));
         }
 
         self.get_json_owned("Items", &params).await
@@ -217,10 +212,7 @@ impl JellyfinClient {
         ];
 
         if !include_types.is_empty() {
-            params.push((
-                "includeItemTypes".to_string(),
-                include_types.join(","),
-            ));
+            params.push(("includeItemTypes".to_string(), include_types.join(",")));
         }
 
         self.get_json_owned("Items", &params).await
@@ -243,10 +235,7 @@ impl JellyfinClient {
         ];
 
         if !include_types.is_empty() {
-            params.push((
-                "includeItemTypes".to_string(),
-                include_types.join(","),
-            ));
+            params.push(("includeItemTypes".to_string(), include_types.join(",")));
         }
 
         self.get_json_owned("Items", &params).await
@@ -312,7 +301,10 @@ impl JellyfinClient {
             "Library/VirtualFolders",
             &[
                 ("name", name),
-                ("refreshLibrary", if refresh_library { "true" } else { "false" }),
+                (
+                    "refreshLibrary",
+                    if refresh_library { "true" } else { "false" },
+                ),
             ],
         )
         .await
@@ -337,10 +329,7 @@ impl JellyfinClient {
             ("userId".to_string(), user_id.to_string()),
             ("parentId".to_string(), season_id.to_string()),
             ("recursive".to_string(), "false".to_string()),
-            (
-                "includeItemTypes".to_string(),
-                "Episode".to_string(),
-            ),
+            ("includeItemTypes".to_string(), "Episode".to_string()),
             ("enableImages".to_string(), "true".to_string()),
             ("imageTypeLimit".to_string(), "1".to_string()),
             ("sortBy".to_string(), "SortName".to_string()),
@@ -496,8 +485,11 @@ impl JellyfinClient {
     }
 
     pub async fn report_playing_ping(&self, play_session_id: &str) -> Result<(), AppError> {
-        self.post_no_body_no_content("Sessions/Playing/Ping", &[("playSessionId", play_session_id)])
-            .await
+        self.post_no_body_no_content(
+            "Sessions/Playing/Ping",
+            &[("playSessionId", play_session_id)],
+        )
+        .await
     }
 
     pub async fn library_refresh_all(&self) -> Result<(), AppError> {
@@ -627,7 +619,10 @@ impl JellyfinClient {
     }
 
     fn with_auth(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        req.header("X-Emby-Authorization", self.authorization_header(self.token()))
+        req.header(
+            "X-Emby-Authorization",
+            self.authorization_header(self.token()),
+        )
     }
 
     fn authorization_header(&self, token: Option<&str>) -> String {
@@ -672,11 +667,7 @@ fn normalize_base_url(input: &str) -> Result<Url, AppError> {
 }
 
 fn inferred_scheme_for_host(raw: &str) -> &'static str {
-    if is_local_host(raw) {
-        "http"
-    } else {
-        "https"
-    }
+    if is_local_host(raw) { "http" } else { "https" }
 }
 
 fn is_local_host(raw: &str) -> bool {
@@ -710,7 +701,9 @@ fn is_local_host(raw: &str) -> bool {
     false
 }
 
-async fn parse_json_response<T: DeserializeOwned>(response: reqwest::Response) -> Result<T, AppError> {
+async fn parse_json_response<T: DeserializeOwned>(
+    response: reqwest::Response,
+) -> Result<T, AppError> {
     let status = response.status();
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
@@ -808,7 +801,8 @@ mod tests {
 
     #[test]
     fn build_video_stream_url_contains_expected_query_values() -> Result<(), AppError> {
-        let mut client = JellyfinClient::new(&server("https://example.com"), "device-3".to_string())?;
+        let mut client =
+            JellyfinClient::new(&server("https://example.com"), "device-3".to_string())?;
         client.set_token(Some("tok".to_string()));
 
         let url = client.build_video_stream_url(
@@ -823,14 +817,22 @@ mod tests {
         let parsed = Url::parse(&url).expect("generated URL must parse");
         assert_eq!(parsed.path(), "/Videos/item1/stream");
 
-        let pairs: std::collections::HashMap<_, _> =
-            parsed.query_pairs().into_owned().collect();
+        let pairs: std::collections::HashMap<_, _> = parsed.query_pairs().into_owned().collect();
 
         assert_eq!(pairs.get("static").map(String::as_str), Some("false"));
-        assert_eq!(pairs.get("mediaSourceId").map(String::as_str), Some("source1"));
-        assert_eq!(pairs.get("playSessionId").map(String::as_str), Some("session1"));
+        assert_eq!(
+            pairs.get("mediaSourceId").map(String::as_str),
+            Some("source1")
+        );
+        assert_eq!(
+            pairs.get("playSessionId").map(String::as_str),
+            Some("session1")
+        );
         assert_eq!(pairs.get("audioStreamIndex").map(String::as_str), Some("2"));
-        assert_eq!(pairs.get("subtitleStreamIndex").map(String::as_str), Some("4"));
+        assert_eq!(
+            pairs.get("subtitleStreamIndex").map(String::as_str),
+            Some("4")
+        );
         assert_eq!(pairs.get("api_key").map(String::as_str), Some("tok"));
 
         Ok(())

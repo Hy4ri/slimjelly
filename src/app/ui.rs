@@ -2,10 +2,7 @@ use std::{collections::HashSet, sync::atomic::Ordering};
 
 use eframe::egui::{self, Color32, RichText, Stroke, Vec2};
 
-use crate::{
-    config::PreferredPlayer,
-    jellyfin::models::BaseItemDto,
-};
+use crate::{config::PreferredPlayer, jellyfin::models::BaseItemDto};
 
 use super::{LibrarySection, Screen, SessionView, SlimJellyApp, UiMessage};
 
@@ -160,8 +157,10 @@ impl SlimJellyApp {
                         .unwrap_or(false);
 
                     if !selected_still_exists {
-                        self.admin_selected_virtual_folder_name =
-                            self.admin_virtual_folders.first().and_then(|folder| folder.name.clone());
+                        self.admin_selected_virtual_folder_name = self
+                            .admin_virtual_folders
+                            .first()
+                            .and_then(|folder| folder.name.clone());
                     }
                 }
                 UiMessage::VirtualFoldersFailed(message) => {
@@ -187,7 +186,9 @@ impl SlimJellyApp {
                         .unwrap_or(false);
 
                     if !selected_exists {
-                        if let Some(first_id) = self.detail_seasons.first().and_then(|s| s.id.clone()) {
+                        if let Some(first_id) =
+                            self.detail_seasons.first().and_then(|s| s.id.clone())
+                        {
                             self.choose_detail_season(first_id);
                         }
                     } else if self.detail_episodes.is_empty() {
@@ -222,7 +223,8 @@ impl SlimJellyApp {
                 UiMessage::PlaylistsLoaded(playlists) => {
                     self.playlists = playlists;
                     if self.selected_playlist_id.is_none() {
-                        self.selected_playlist_id = self.playlists.first().and_then(|p| p.id.clone());
+                        self.selected_playlist_id =
+                            self.playlists.first().and_then(|p| p.id.clone());
                         if let Some(first_id) = self.selected_playlist_id.clone() {
                             self.load_playlist_items(first_id);
                         }
@@ -245,10 +247,7 @@ impl SlimJellyApp {
                 UiMessage::LastPlayedFailed(message) => {
                     self.status_line = format!("Last played load failed: {message}");
                 }
-                UiMessage::ThumbnailLoaded {
-                    key,
-                    bytes,
-                } => {
+                UiMessage::ThumbnailLoaded { key, bytes } => {
                     self.thumbnail_pending.remove(&key);
 
                     if let Ok(image) = image::load_from_memory(&bytes) {
@@ -335,6 +334,7 @@ impl SlimJellyApp {
                                 let stop_ticks =
                                     SlimJellyApp::stop_ticks_for_exit(&playback, elapsed_seconds);
 
+                                self.cleanup_subtitle_temp();
                                 self.status_line = "Playback ended".to_string();
                                 self.report_stop_for_playback(playback, stop_ticks);
                             }
@@ -357,6 +357,7 @@ impl SlimJellyApp {
                 UiMessage::PlaybackStopped => {
                     if self.playback.is_some() {
                         self.playback = None;
+                        self.cleanup_subtitle_temp();
                     }
                 }
                 UiMessage::TasksLoaded(tasks) => {
@@ -426,17 +427,29 @@ impl SlimJellyApp {
                 UiMessage::DeleteItemDone { item_id } => {
                     self.status_line = "Item deleted".to_string();
                     self.admin_delete_item_confirm.clear();
-                    self.home_continue_watching.retain(|item| item.id.as_deref() != Some(item_id.as_str()));
-                    self.home_recent_movies.retain(|item| item.id.as_deref() != Some(item_id.as_str()));
-                    self.home_recent_series.retain(|item| item.id.as_deref() != Some(item_id.as_str()));
-                    self.library_items.retain(|item| item.id.as_deref() != Some(item_id.as_str()));
-                    self.collection_items.retain(|item| item.id.as_deref() != Some(item_id.as_str()));
-                    self.items.retain(|item| item.id.as_deref() != Some(item_id.as_str()));
-                    self.playlist_items.retain(|item| item.id.as_deref() != Some(item_id.as_str()));
-                    self.detail_related.retain(|item| item.id.as_deref() != Some(item_id.as_str()));
-                    self.detail_episodes.retain(|item| item.id.as_deref() != Some(item_id.as_str()));
+                    self.home_continue_watching
+                        .retain(|item| item.id.as_deref() != Some(item_id.as_str()));
+                    self.home_recent_movies
+                        .retain(|item| item.id.as_deref() != Some(item_id.as_str()));
+                    self.home_recent_series
+                        .retain(|item| item.id.as_deref() != Some(item_id.as_str()));
+                    self.library_items
+                        .retain(|item| item.id.as_deref() != Some(item_id.as_str()));
+                    self.collection_items
+                        .retain(|item| item.id.as_deref() != Some(item_id.as_str()));
+                    self.items
+                        .retain(|item| item.id.as_deref() != Some(item_id.as_str()));
+                    self.playlist_items
+                        .retain(|item| item.id.as_deref() != Some(item_id.as_str()));
+                    self.detail_related
+                        .retain(|item| item.id.as_deref() != Some(item_id.as_str()));
+                    self.detail_episodes
+                        .retain(|item| item.id.as_deref() != Some(item_id.as_str()));
 
-                    if self.selected_item.as_ref().and_then(|item| item.id.as_ref())
+                    if self
+                        .selected_item
+                        .as_ref()
+                        .and_then(|item| item.id.as_ref())
                         == Some(&item_id)
                     {
                         self.selected_item = None;
@@ -458,11 +471,7 @@ impl SlimJellyApp {
                     self.admin_delete_library_confirm.clear();
                     self.admin_virtual_folders
                         .retain(|folder| folder.name.as_deref() != Some(name.as_str()));
-                    if self
-                        .admin_selected_virtual_folder_name
-                        .as_deref()
-                        == Some(name.as_str())
-                    {
+                    if self.admin_selected_virtual_folder_name.as_deref() == Some(name.as_str()) {
                         self.admin_selected_virtual_folder_name = self
                             .admin_virtual_folders
                             .first()
@@ -477,6 +486,25 @@ impl SlimJellyApp {
                 }
                 UiMessage::DeleteLibraryFailed(message) => {
                     self.status_line = format!("Delete library failed: {message}");
+                }
+                UiMessage::SubtitleSearchResults(results) => {
+                    self.subtitle_search_results = results;
+                    self.subtitle_search_loading = false;
+                    self.status_line = format!(
+                        "Found {} subtitle results",
+                        self.subtitle_search_results.len()
+                    );
+                }
+                UiMessage::SubtitleSearchFailed(message) => {
+                    self.subtitle_search_loading = false;
+                    self.status_line = format!("Subtitle search failed: {message}");
+                }
+                UiMessage::SubtitleDownloaded { file_name, path } => {
+                    self.subtitle_temp_path = Some(path);
+                    self.status_line = format!("Subtitle downloaded: {file_name}");
+                }
+                UiMessage::SubtitleDownloadFailed(message) => {
+                    self.status_line = format!("Subtitle download failed: {message}");
                 }
             }
         }
@@ -563,12 +591,7 @@ impl SlimJellyApp {
         }
     }
 
-    fn sidebar_library_button(
-        &mut self,
-        ui: &mut egui::Ui,
-        label: &str,
-        section: LibrarySection,
-    ) {
+    fn sidebar_library_button(&mut self, ui: &mut egui::Ui, label: &str, section: LibrarySection) {
         let selected =
             self.current_screen == Screen::Libraries && self.current_library_section == section;
         let fill = if selected {
@@ -670,7 +693,8 @@ impl SlimJellyApp {
                     });
 
                     let enter_pressed = ui.input(|i| i.key_pressed(egui::Key::Enter));
-                    let input_focused = url_resp.has_focus() || user_resp.has_focus() || pass_resp.has_focus();
+                    let input_focused =
+                        url_resp.has_focus() || user_resp.has_focus() || pass_resp.has_focus();
                     if enter_pressed && input_focused {
                         self.do_login();
                     }
@@ -961,7 +985,10 @@ impl SlimJellyApp {
                                     .add(
                                         egui::Button::new("Play")
                                             .fill(Color32::from_rgb(122, 36, 50))
-                                            .stroke(Stroke::new(1.0, Color32::from_rgb(175, 56, 74))),
+                                            .stroke(Stroke::new(
+                                                1.0,
+                                                Color32::from_rgb(175, 56, 74),
+                                            )),
                                     )
                                     .clicked()
                                 {
@@ -1011,9 +1038,10 @@ impl SlimJellyApp {
             return;
         }
 
-        let reveal = ui
-            .ctx()
-            .animate_bool(ui.make_persistent_id((row_id, "visible")), !items.is_empty());
+        let reveal = ui.ctx().animate_bool(
+            ui.make_persistent_id((row_id, "visible")),
+            !items.is_empty(),
+        );
         if reveal < 1.0 {
             ui.add_space((1.0 - reveal) * 8.0);
         }
@@ -1035,7 +1063,12 @@ impl SlimJellyApp {
             });
     }
 
-    fn draw_media_card(&mut self, ui: &mut egui::Ui, item: &BaseItemDto, show_progress: bool) -> bool {
+    fn draw_media_card(
+        &mut self,
+        ui: &mut egui::Ui,
+        item: &BaseItemDto,
+        show_progress: bool,
+    ) -> bool {
         let compact = Self::is_compact_layout(ui);
         let (card_width, image_size) = Self::card_dimensions(compact);
         let mut clicked = false;
@@ -1084,7 +1117,10 @@ impl SlimJellyApp {
             ui.painter().rect_stroke(
                 frame.response.rect.expand(1.5),
                 egui::CornerRadius::same(8),
-                Stroke::new(1.0 + hover_t, Color32::from_rgba_unmultiplied(196, 62, 82, alpha)),
+                Stroke::new(
+                    1.0 + hover_t,
+                    Color32::from_rgba_unmultiplied(196, 62, 82, alpha),
+                ),
                 egui::StrokeKind::Outside,
             );
         }
@@ -1104,16 +1140,18 @@ impl SlimJellyApp {
             return;
         }
 
-        egui::ScrollArea::vertical().id_salt(grid_id).show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                for item in items {
-                    if self.draw_media_card(ui, item, false) {
-                        self.open_item_details(item.clone(), return_screen);
+        egui::ScrollArea::vertical()
+            .id_salt(grid_id)
+            .show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    for item in items {
+                        if self.draw_media_card(ui, item, false) {
+                            self.open_item_details(item.clone(), return_screen);
+                        }
+                        ui.add_space(6.0);
                     }
-                    ui.add_space(6.0);
-                }
+                });
             });
-        });
     }
 
     fn draw_item_image_with_size(
@@ -1246,7 +1284,11 @@ impl SlimJellyApp {
                     for view in &self.views {
                         if let Some(id) = &view.id {
                             let label = view.name.clone().unwrap_or_else(|| id.clone());
-                            ui.selectable_value(&mut self.selected_view_id, Some(id.clone()), label);
+                            ui.selectable_value(
+                                &mut self.selected_view_id,
+                                Some(id.clone()),
+                                label,
+                            );
                         }
                     }
                 });
@@ -1331,7 +1373,11 @@ impl SlimJellyApp {
     }
 
     fn draw_playlists_screen(&mut self, ui: &mut egui::Ui) {
-        self.draw_screen_header(ui, "Playlists", "Open playlists and browse their media items.");
+        self.draw_screen_header(
+            ui,
+            "Playlists",
+            "Open playlists and browse their media items.",
+        );
 
         ui.horizontal(|ui| {
             if ui.button("Refresh Playlists").clicked() {
@@ -1432,7 +1478,12 @@ impl SlimJellyApp {
                     .show(ui, |ui| {
                         if compact {
                             if self
-                                .draw_item_image_with_size(ui, &item, Vec2::new(220.0, 308.0), "Primary")
+                                .draw_item_image_with_size(
+                                    ui,
+                                    &item,
+                                    Vec2::new(220.0, 308.0),
+                                    "Primary",
+                                )
                                 .clicked()
                             {
                                 self.selected_item = Some(item.clone());
@@ -1474,6 +1525,8 @@ impl SlimJellyApp {
         });
 
         ui.add_space(if compact { 5.0 } else { 6.0 });
+        self.draw_subtitle_panel(ui);
+        ui.add_space(if compact { 5.0 } else { 6.0 });
         self.draw_detail_seasons_section(ui, &item);
         ui.add_space(if compact { 5.0 } else { 6.0 });
         self.draw_detail_cast_section(ui, &item);
@@ -1498,7 +1551,10 @@ impl SlimJellyApp {
             .map(|v| format!("{v:.1}/10"))
             .unwrap_or_else(|| "--".to_string());
         let duration = Self::format_runtime(item.run_time_ticks);
-        let age = item.official_rating.clone().unwrap_or_else(|| "--".to_string());
+        let age = item
+            .official_rating
+            .clone()
+            .unwrap_or_else(|| "--".to_string());
 
         if compact {
             ui.horizontal_wrapped(|ui| {
@@ -1511,7 +1567,9 @@ impl SlimJellyApp {
                 ui.label(RichText::new(format!("Age {age}")).weak());
             });
         } else {
-            ui.label(format!("Year: {year} | Rating: {rating} | Duration: {duration} | Age: {age}"));
+            ui.label(format!(
+                "Year: {year} | Rating: {rating} | Duration: {duration} | Age: {age}"
+            ));
         }
 
         ui.label(RichText::new(self.detail_tech_summary()).weak());
@@ -1597,8 +1655,20 @@ impl SlimJellyApp {
                 ui.close_menu();
             }
 
+            if ui.button("Download Subtitles").clicked() {
+                self.subtitle_panel_open = !self.subtitle_panel_open;
+                if self.subtitle_panel_open {
+                    self.search_subtitles();
+                }
+                ui.close_menu();
+            }
+
             ui.separator();
-            ui.label(RichText::new("Delete is available in Admin only").small().weak());
+            ui.label(
+                RichText::new("Delete is available in Admin only")
+                    .small()
+                    .weak(),
+            );
         });
     }
 
@@ -1610,122 +1680,126 @@ impl SlimJellyApp {
             if compact { 4.0 } else { 6.0 },
             215.0,
             |ui| {
-            ui.label(RichText::new("Seasons & Episodes").strong());
+                ui.label(RichText::new("Seasons & Episodes").strong());
 
-            let is_series = item
-                .r#type
-                .as_deref()
-                .map(|item_type| item_type.eq_ignore_ascii_case("Series"))
-                .unwrap_or(false);
-
-            if !is_series {
-                ui.label(RichText::new("--").weak());
-                return;
-            }
-
-            if self.detail_seasons.is_empty() {
-                ui.label(RichText::new("No seasons found").weak());
-                return;
-            }
-
-            let seasons = self.detail_seasons.clone();
-            ui.horizontal(|ui| {
-                ui.label("Season");
-
-                let selected_text = self
-                    .detail_selected_season_id
+                let is_series = item
+                    .r#type
                     .as_deref()
-                    .and_then(|selected| {
-                        seasons
-                            .iter()
-                            .find(|season| season.id.as_deref() == Some(selected))
-                    })
-                    .and_then(|season| season.name.clone())
-                    .unwrap_or_else(|| "--".to_string());
+                    .map(|item_type| item_type.eq_ignore_ascii_case("Series"))
+                    .unwrap_or(false);
 
-                egui::ComboBox::from_id_salt("detail_season_select")
-                    .selected_text(selected_text)
-                    .show_ui(ui, |ui| {
-                        for season in &seasons {
-                            let Some(season_id) = season.id.clone() else {
-                                continue;
-                            };
-                            let label = season
-                                .name
-                                .clone()
-                                .unwrap_or_else(|| "Untitled season".to_string());
-                            let selected =
-                                self.detail_selected_season_id.as_deref() == Some(season_id.as_str());
+                if !is_series {
+                    ui.label(RichText::new("--").weak());
+                    return;
+                }
 
-                            if ui.selectable_label(selected, label).clicked() {
-                                self.choose_detail_season(season_id);
+                if self.detail_seasons.is_empty() {
+                    ui.label(RichText::new("No seasons found").weak());
+                    return;
+                }
+
+                let seasons = self.detail_seasons.clone();
+                ui.horizontal(|ui| {
+                    ui.label("Season");
+
+                    let selected_text = self
+                        .detail_selected_season_id
+                        .as_deref()
+                        .and_then(|selected| {
+                            seasons
+                                .iter()
+                                .find(|season| season.id.as_deref() == Some(selected))
+                        })
+                        .and_then(|season| season.name.clone())
+                        .unwrap_or_else(|| "--".to_string());
+
+                    egui::ComboBox::from_id_salt("detail_season_select")
+                        .selected_text(selected_text)
+                        .show_ui(ui, |ui| {
+                            for season in &seasons {
+                                let Some(season_id) = season.id.clone() else {
+                                    continue;
+                                };
+                                let label = season
+                                    .name
+                                    .clone()
+                                    .unwrap_or_else(|| "Untitled season".to_string());
+                                let selected = self.detail_selected_season_id.as_deref()
+                                    == Some(season_id.as_str());
+
+                                if ui.selectable_label(selected, label).clicked() {
+                                    self.choose_detail_season(season_id);
+                                }
                             }
-                        }
-                    });
-            });
+                        });
+                });
 
-            if self.detail_episodes.is_empty() {
-                ui.add_space(4.0);
-                ui.label(RichText::new("No episodes found").weak());
-                return;
-            }
+                if self.detail_episodes.is_empty() {
+                    ui.add_space(4.0);
+                    ui.label(RichText::new("No episodes found").weak());
+                    return;
+                }
 
-            let episodes = self.detail_episodes.clone();
-            egui::ScrollArea::vertical()
-                .id_salt("detail_episodes_list")
-                .max_height(280.0)
-                .show(ui, |ui| {
-                    for episode in &episodes {
-                        egui::Frame::group(ui.style())
-                            .inner_margin(egui::Margin::symmetric(8, 8))
-                            .show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    if self
-                                        .draw_item_image_with_size(
-                                            ui,
-                                            episode,
-                                            Vec2::new(148.0, 84.0),
-                                            "Primary",
-                                        )
-                                        .clicked()
-                                    {
-                                        self.open_item_details(
-                                            episode.clone(),
-                                            self.detail_return_screen,
-                                        );
-                                    }
-
-                                    ui.vertical(|ui| {
-                                        let episode_title = Self::episode_title(episode);
-                                        if ui.link(episode_title).clicked() {
+                let episodes = self.detail_episodes.clone();
+                egui::ScrollArea::vertical()
+                    .id_salt("detail_episodes_list")
+                    .max_height(280.0)
+                    .show(ui, |ui| {
+                        for episode in &episodes {
+                            egui::Frame::group(ui.style())
+                                .inner_margin(egui::Margin::symmetric(8, 8))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        if self
+                                            .draw_item_image_with_size(
+                                                ui,
+                                                episode,
+                                                Vec2::new(148.0, 84.0),
+                                                "Primary",
+                                            )
+                                            .clicked()
+                                        {
                                             self.open_item_details(
                                                 episode.clone(),
                                                 self.detail_return_screen,
                                             );
                                         }
 
-                                        ui.label(RichText::new(Self::episode_subtitle(episode)).weak());
+                                        ui.vertical(|ui| {
+                                            let episode_title = Self::episode_title(episode);
+                                            if ui.link(episode_title).clicked() {
+                                                self.open_item_details(
+                                                    episode.clone(),
+                                                    self.detail_return_screen,
+                                                );
+                                            }
 
-                                        let overview = episode
-                                            .overview
-                                            .as_deref()
-                                            .map(str::trim)
-                                            .filter(|value| !value.is_empty())
-                                            .map(|value| {
-                                                let mut text = value.chars().take(170).collect::<String>();
-                                                if value.chars().count() > 170 {
-                                                    text.push_str("...");
-                                                }
-                                                text
-                                            })
-                                            .unwrap_or_else(|| "--".to_string());
-                                        ui.label(RichText::new(overview).small().weak());
+                                            ui.label(
+                                                RichText::new(Self::episode_subtitle(episode))
+                                                    .weak(),
+                                            );
+
+                                            let overview = episode
+                                                .overview
+                                                .as_deref()
+                                                .map(str::trim)
+                                                .filter(|value| !value.is_empty())
+                                                .map(|value| {
+                                                    let mut text =
+                                                        value.chars().take(170).collect::<String>();
+                                                    if value.chars().count() > 170 {
+                                                        text.push_str("...");
+                                                    }
+                                                    text
+                                                })
+                                                .unwrap_or_else(|| "--".to_string());
+                                            ui.label(RichText::new(overview).small().weak());
+                                        });
                                     });
                                 });
-                            });
-                        ui.add_space(4.0);
-                    }
-                });
+                            ui.add_space(4.0);
+                        }
+                    });
             },
         );
     }
@@ -1859,7 +1933,11 @@ impl SlimJellyApp {
             return;
         }
 
-        self.draw_screen_header(ui, "Dashboard", "Server admin controls and scheduled tasks.");
+        self.draw_screen_header(
+            ui,
+            "Dashboard",
+            "Server admin controls and scheduled tasks.",
+        );
 
         ui.horizontal(|ui| {
             if ui.button("Scan All Libraries").clicked() {
@@ -1884,21 +1962,30 @@ impl SlimJellyApp {
 
         ui.separator();
         ui.label(RichText::new("Scheduled Tasks").strong());
-        egui::ScrollArea::vertical().max_height(280.0).show(ui, |ui| {
-            for task in &self.tasks {
-                let name = task.name.clone().unwrap_or_else(|| "Unnamed task".to_string());
-                let state = task.state.clone().unwrap_or_else(|| "unknown".to_string());
-                let progress = task
-                    .current_progress_percentage
-                    .map(|v| format!("{v:.0}%"))
-                    .unwrap_or_else(|| "n/a".to_string());
-                ui.label(format!("{name} | {state} | {progress}"));
-            }
-        });
+        egui::ScrollArea::vertical()
+            .max_height(280.0)
+            .show(ui, |ui| {
+                for task in &self.tasks {
+                    let name = task
+                        .name
+                        .clone()
+                        .unwrap_or_else(|| "Unnamed task".to_string());
+                    let state = task.state.clone().unwrap_or_else(|| "unknown".to_string());
+                    let progress = task
+                        .current_progress_percentage
+                        .map(|v| format!("{v:.0}%"))
+                        .unwrap_or_else(|| "n/a".to_string());
+                    ui.label(format!("{name} | {state} | {progress}"));
+                }
+            });
 
         ui.add_space(10.0);
         ui.separator();
-        ui.label(RichText::new("Danger Zone").strong().color(Color32::from_rgb(210, 78, 95)));
+        ui.label(
+            RichText::new("Danger Zone")
+                .strong()
+                .color(Color32::from_rgb(210, 78, 95)),
+        );
         ui.label(
             RichText::new(
                 "Deletes are permanent and can remove files from disk depending on server configuration.",
@@ -1912,7 +1999,11 @@ impl SlimJellyApp {
             .stroke(Stroke::new(1.0, Color32::from_rgb(95, 36, 47)))
             .show(ui, |ui| {
                 ui.label(RichText::new("Delete Item by ID").strong());
-                ui.label(RichText::new("Type DELETE to enable item deletion.").small().weak());
+                ui.label(
+                    RichText::new("Type DELETE to enable item deletion.")
+                        .small()
+                        .weak(),
+                );
 
                 ui.horizontal(|ui| {
                     ui.label("Confirm");
@@ -1958,9 +2049,7 @@ impl SlimJellyApp {
                                 let Some(name) = folder.name.clone() else {
                                     continue;
                                 };
-                                let selected = self
-                                    .admin_selected_virtual_folder_name
-                                    .as_deref()
+                                let selected = self.admin_selected_virtual_folder_name.as_deref()
                                     == Some(name.as_str());
                                 if ui.selectable_label(selected, &name).clicked() {
                                     self.admin_selected_virtual_folder_name = Some(name);
@@ -2012,8 +2101,16 @@ impl SlimJellyApp {
                     PreferredPlayer::Vlc => "VLC",
                 })
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.config.player.preferred, PreferredPlayer::Mpv, "mpv");
-                    ui.selectable_value(&mut self.config.player.preferred, PreferredPlayer::Vlc, "VLC");
+                    ui.selectable_value(
+                        &mut self.config.player.preferred,
+                        PreferredPlayer::Mpv,
+                        "mpv",
+                    );
+                    ui.selectable_value(
+                        &mut self.config.player.preferred,
+                        PreferredPlayer::Vlc,
+                        "VLC",
+                    );
                 });
         });
 
@@ -2023,7 +2120,11 @@ impl SlimJellyApp {
             let response = ui.text_edit_singleline(&mut value);
             if response.changed() {
                 let trimmed = value.trim().to_string();
-                self.config.player.mpv_path = if trimmed.is_empty() { None } else { Some(trimmed) };
+                self.config.player.mpv_path = if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed)
+                };
             }
 
             if response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
@@ -2037,7 +2138,11 @@ impl SlimJellyApp {
             let response = ui.text_edit_singleline(&mut value);
             if response.changed() {
                 let trimmed = value.trim().to_string();
-                self.config.player.vlc_path = if trimmed.is_empty() { None } else { Some(trimmed) };
+                self.config.player.vlc_path = if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed)
+                };
             }
 
             if response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
@@ -2059,13 +2164,207 @@ impl SlimJellyApp {
         });
 
         ui.horizontal(|ui| {
-            ui.checkbox(&mut self.config.server.allow_self_signed, "Allow self-signed certs");
+            ui.checkbox(
+                &mut self.config.server.allow_self_signed,
+                "Allow self-signed certs",
+            );
             ui.checkbox(&mut self.config.playback.direct_first, "Direct play first");
-            ui.checkbox(&mut self.config.playback.fallback_once, "Transcode fallback once");
+            ui.checkbox(
+                &mut self.config.playback.fallback_once,
+                "Transcode fallback once",
+            );
         });
 
+        ui.add_space(12.0);
+        ui.separator();
+        ui.add_space(4.0);
+        ui.label(RichText::new("OpenSubtitles").strong().size(16.0));
+        ui.label(
+            RichText::new("Configure subtitle search and download.")
+                .small()
+                .weak(),
+        );
+        ui.add_space(4.0);
+
+        ui.horizontal(|ui| {
+            ui.label("API Key");
+            let resp = ui.add(
+                egui::TextEdit::singleline(&mut self.config.subtitles.api_key)
+                    .password(true)
+                    .desired_width(300.0),
+            );
+            if resp.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                self.save_settings();
+            }
+        });
+
+        ui.horizontal(|ui| {
+            ui.label("Username");
+            let resp = ui.add(
+                egui::TextEdit::singleline(&mut self.config.subtitles.username)
+                    .desired_width(250.0),
+            );
+            if resp.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                self.save_settings();
+            }
+        });
+
+        ui.horizontal(|ui| {
+            ui.label("Password");
+            let resp = ui.add(
+                egui::TextEdit::singleline(&mut self.config.subtitles.password)
+                    .password(true)
+                    .desired_width(250.0),
+            );
+            if resp.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                self.save_settings();
+            }
+        });
+
+        ui.horizontal(|ui| {
+            ui.label("Default Language");
+            let resp = ui.add(
+                egui::TextEdit::singleline(&mut self.config.subtitles.default_language)
+                    .desired_width(80.0),
+            );
+            if resp.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                self.save_settings();
+            }
+            ui.label(
+                RichText::new("ISO 639-1 codes: en, ar, fr, es, de …")
+                    .small()
+                    .weak(),
+            );
+        });
+
+        ui.add_space(8.0);
         if ui.button("Save Settings").clicked() {
             self.save_settings();
         }
+    }
+
+    fn draw_subtitle_panel(&mut self, ui: &mut egui::Ui) {
+        if !self.subtitle_panel_open {
+            return;
+        }
+
+        let compact = Self::is_compact_layout(ui);
+        Self::show_faded_section(
+            ui,
+            "details_subtitle_section",
+            if compact { 4.0 } else { 6.0 },
+            225.0,
+            |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Subtitles").strong());
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("✕").clicked() {
+                            self.subtitle_panel_open = false;
+                        }
+                    });
+                });
+
+                if let Some(path) = &self.subtitle_temp_path {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("✓ Downloaded:").small().strong());
+                        ui.label(RichText::new(path).small().weak());
+                    });
+                    ui.add_space(4.0);
+                }
+
+                ui.horizontal(|ui| {
+                    ui.label("Language");
+                    let lang_resp = ui.add(
+                        egui::TextEdit::singleline(&mut self.subtitle_search_language)
+                            .desired_width(80.0),
+                    );
+                    if ui.button("Search").clicked()
+                        || (lang_resp.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+                    {
+                        self.search_subtitles();
+                    }
+                    if self.subtitle_search_loading {
+                        ui.spinner();
+                    }
+                });
+
+                if self.subtitle_search_results.is_empty() && !self.subtitle_search_loading {
+                    ui.label(RichText::new("No results").weak());
+                    return;
+                }
+
+                let results = self.subtitle_search_results.clone();
+                egui::ScrollArea::vertical()
+                    .id_salt("subtitle_results_scroll")
+                    .max_height(240.0)
+                    .show(ui, |ui| {
+                        for result in &results {
+                            let Some(attrs) = &result.attributes else {
+                                continue;
+                            };
+
+                            let release = attrs
+                                .release
+                                .clone()
+                                .unwrap_or_else(|| "Unknown release".to_string());
+                            let lang = attrs.language.clone().unwrap_or_else(|| "--".to_string());
+                            let downloads = attrs.download_count.unwrap_or(0);
+                            let trusted = attrs.from_trusted.unwrap_or(false);
+
+                            egui::Frame::group(ui.style())
+                                .inner_margin(egui::Margin::symmetric(8, 6))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.vertical(|ui| {
+                                            ui.label(RichText::new(&release).small().strong());
+                                            ui.horizontal(|ui| {
+                                                ui.label(
+                                                    RichText::new(format!("Lang: {lang}"))
+                                                        .small()
+                                                        .weak(),
+                                                );
+                                                ui.label(
+                                                    RichText::new(format!("DL: {downloads}"))
+                                                        .small()
+                                                        .weak(),
+                                                );
+                                                if trusted {
+                                                    ui.label(
+                                                        RichText::new("✓ Trusted")
+                                                            .small()
+                                                            .color(Color32::from_rgb(80, 200, 120)),
+                                                    );
+                                                }
+                                            });
+                                        });
+
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                if let Some(files) = &attrs.files {
+                                                    if let Some(file) = files.first() {
+                                                        if let Some(file_id) = file.file_id {
+                                                            let fname = file
+                                                                .file_name
+                                                                .clone()
+                                                                .unwrap_or_else(|| {
+                                                                    format!("{file_id}.srt")
+                                                                });
+                                                            if ui.button("Download").clicked() {
+                                                                self.download_subtitle(
+                                                                    file_id, fname,
+                                                                );
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                        );
+                                    });
+                                });
+                        }
+                    });
+            },
+        );
     }
 }

@@ -3,6 +3,7 @@ mod config;
 mod error;
 mod jellyfin;
 mod secure_store;
+mod subtitles;
 
 use std::sync::Arc;
 
@@ -132,7 +133,9 @@ fn select_linux_backend(requested: LinuxBackend) -> LinuxBackend {
 
 #[cfg(target_os = "linux")]
 fn env_has_non_empty(name: &str) -> bool {
-    std::env::var(name).map(|value| !value.is_empty()).unwrap_or(false)
+    std::env::var(name)
+        .map(|value| !value.is_empty())
+        .unwrap_or(false)
 }
 
 #[cfg(target_os = "linux")]
@@ -148,8 +151,7 @@ fn parse_linux_backend(value: &str) -> Option<LinuxBackend> {
 #[cfg(target_os = "linux")]
 fn build_native_options(backend: LinuxBackend) -> eframe::NativeOptions {
     use winit::platform::{
-        wayland::EventLoopBuilderExtWayland as _,
-        x11::EventLoopBuilderExtX11 as _,
+        wayland::EventLoopBuilderExtWayland as _, x11::EventLoopBuilderExtX11 as _,
     };
 
     let mut native_options = eframe::NativeOptions::default();

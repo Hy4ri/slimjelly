@@ -24,6 +24,7 @@ pub struct AppConfig {
     pub server: ServerConfig,
     pub player: PlayerConfig,
     pub playback: PlaybackConfig,
+    pub subtitles: SubtitleConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,6 +76,15 @@ pub enum ResumePolicy {
     StartOver,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SubtitleConfig {
+    pub api_key: String,
+    pub username: String,
+    pub password: String,
+    pub default_language: String,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum SyncMode {
@@ -89,6 +99,7 @@ impl Default for AppConfig {
             server: ServerConfig::default(),
             player: PlayerConfig::default(),
             playback: PlaybackConfig::default(),
+            subtitles: SubtitleConfig::default(),
         }
     }
 }
@@ -135,9 +146,20 @@ impl Default for PlaybackConfig {
     }
 }
 
+impl Default for SubtitleConfig {
+    fn default() -> Self {
+        Self {
+            api_key: String::new(),
+            username: String::new(),
+            password: String::new(),
+            default_language: "en".to_string(),
+        }
+    }
+}
+
 pub fn load_or_create() -> Result<(AppConfig, AppPaths), AppError> {
-    let project_dirs = ProjectDirs::from("io", "slimjelly", "slimjelly")
-        .ok_or(AppError::ConfigDirUnavailable)?;
+    let project_dirs =
+        ProjectDirs::from("io", "slimjelly", "slimjelly").ok_or(AppError::ConfigDirUnavailable)?;
 
     let paths = AppPaths {
         config_dir: project_dirs.config_dir().to_path_buf(),
@@ -150,7 +172,6 @@ pub fn load_or_create() -> Result<(AppConfig, AppPaths), AppError> {
 }
 
 fn load_or_create_from_paths(paths: AppPaths) -> Result<(AppConfig, AppPaths), AppError> {
-
     fs::create_dir_all(&paths.config_dir)?;
     fs::create_dir_all(&paths.data_dir)?;
 

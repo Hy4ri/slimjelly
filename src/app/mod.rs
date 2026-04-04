@@ -2,10 +2,7 @@ mod actions;
 mod playback;
 mod ui;
 
-use std::sync::{
-    Arc, Mutex,
-    atomic::AtomicU64,
-};
+use std::sync::{Arc, Mutex, atomic::AtomicU64};
 
 use eframe::egui;
 use tokio::runtime::Runtime;
@@ -21,6 +18,7 @@ use crate::{
         },
     },
     secure_store::load_session,
+    subtitles::models::SubtitleResult,
 };
 
 const MPV_IPC_SOCKET_PATH: &str = "/tmp/slimjelly-mpv.sock";
@@ -173,6 +171,13 @@ enum UiMessage {
         name: String,
     },
     DeleteLibraryFailed(String),
+    SubtitleSearchResults(Vec<SubtitleResult>),
+    SubtitleSearchFailed(String),
+    SubtitleDownloaded {
+        file_name: String,
+        path: String,
+    },
+    SubtitleDownloadFailed(String),
 }
 
 #[derive(Debug, Clone)]
@@ -251,11 +256,19 @@ pub struct SlimJellyApp {
     admin_delete_library_confirm: String,
 
     playback: Option<PlaybackView>,
+
+    subtitle_search_results: Vec<SubtitleResult>,
+    subtitle_search_language: String,
+    subtitle_search_loading: bool,
+    subtitle_panel_open: bool,
+    subtitle_os_token: Option<String>,
+    subtitle_temp_path: Option<String>,
 }
 
 impl SlimJellyApp {
     pub fn new(runtime: Arc<Runtime>, config: AppConfig, paths: AppPaths) -> Self {
         let messages = Arc::new(Mutex::new(Vec::new()));
+        let default_sub_language = config.subtitles.default_language.clone();
         let mut app = Self {
             runtime,
             config,
@@ -304,6 +317,12 @@ impl SlimJellyApp {
             admin_delete_item_confirm: String::new(),
             admin_delete_library_confirm: String::new(),
             playback: None,
+            subtitle_search_results: Vec::new(),
+            subtitle_search_language: default_sub_language,
+            subtitle_search_loading: false,
+            subtitle_panel_open: false,
+            subtitle_os_token: None,
+            subtitle_temp_path: None,
         };
 
         app.try_restore_session();
@@ -356,7 +375,10 @@ impl SlimJellyApp {
                         .unwrap_or(false);
                     Self::push_message(
                         &messages,
-                        UiMessage::SessionValidated { user_name, is_admin },
+                        UiMessage::SessionValidated {
+                            user_name,
+                            is_admin,
+                        },
                     );
                 }
                 Err(err) => {
@@ -406,8 +428,16 @@ impl SlimJellyApp {
     fn image_tag_for_item(item: &BaseItemDto) -> Option<&str> {
         item.primary_image_tag
             .as_deref()
-            .or_else(|| item.image_tags.as_ref().and_then(|tags| tags.primary.as_deref()))
-            .or_else(|| item.image_tags.as_ref().and_then(|tags| tags.thumb.as_deref()))
+            .or_else(|| {
+                item.image_tags
+                    .as_ref()
+                    .and_then(|tags| tags.primary.as_deref())
+            })
+            .or_else(|| {
+                item.image_tags
+                    .as_ref()
+                    .and_then(|tags| tags.thumb.as_deref())
+            })
     }
 
     fn thumbnail_key(
@@ -497,7 +527,10 @@ mod tests {
     #[test]
     fn retry_transcode_when_quick_exit_and_no_progress() {
         let playback = playback_fixture();
-        assert!(SlimJellyApp::should_retry_transcode(&playback, QUICK_EXIT_FALLBACK_SECONDS));
+        assert!(SlimJellyApp::should_retry_transcode(
+            &playback,
+            QUICK_EXIT_FALLBACK_SECONDS
+        ));
     }
 
     #[test]

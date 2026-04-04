@@ -27,7 +27,9 @@ impl SlimJellyApp {
                     &messages,
                     UiMessage::PlaylistsLoaded(result.items.unwrap_or_default()),
                 ),
-                Err(err) => Self::push_message(&messages, UiMessage::PlaylistsFailed(err.to_string())),
+                Err(err) => {
+                    Self::push_message(&messages, UiMessage::PlaylistsFailed(err.to_string()))
+                }
             }
         });
     }
@@ -53,7 +55,9 @@ impl SlimJellyApp {
                     &messages,
                     UiMessage::HomeContinueWatchingLoaded(result.items.unwrap_or_default()),
                 ),
-                Err(err) => Self::push_message(&messages, UiMessage::HomeLoadFailed(err.to_string())),
+                Err(err) => {
+                    Self::push_message(&messages, UiMessage::HomeLoadFailed(err.to_string()))
+                }
             }
         });
     }
@@ -76,7 +80,9 @@ impl SlimJellyApp {
                     &messages,
                     UiMessage::HomeRecentMoviesLoaded(result.items.unwrap_or_default()),
                 ),
-                Err(err) => Self::push_message(&messages, UiMessage::HomeLoadFailed(err.to_string())),
+                Err(err) => {
+                    Self::push_message(&messages, UiMessage::HomeLoadFailed(err.to_string()))
+                }
             }
         });
     }
@@ -99,7 +105,9 @@ impl SlimJellyApp {
                     &messages,
                     UiMessage::HomeRecentSeriesLoaded(result.items.unwrap_or_default()),
                 ),
-                Err(err) => Self::push_message(&messages, UiMessage::HomeLoadFailed(err.to_string())),
+                Err(err) => {
+                    Self::push_message(&messages, UiMessage::HomeLoadFailed(err.to_string()))
+                }
             }
         });
     }
@@ -302,7 +310,9 @@ impl SlimJellyApp {
                         .cloned();
                     Self::push_message(&messages, UiMessage::DetailTechLoaded(media));
                 }
-                Err(err) => Self::push_message(&messages, UiMessage::DetailTechFailed(err.to_string())),
+                Err(err) => {
+                    Self::push_message(&messages, UiMessage::DetailTechFailed(err.to_string()))
+                }
             }
         });
     }
@@ -353,7 +363,9 @@ impl SlimJellyApp {
         self.runtime.spawn(async move {
             match client.last_played_item(&session.user_id).await {
                 Ok(item) => Self::push_message(&messages, UiMessage::LastPlayedLoaded(item)),
-                Err(err) => Self::push_message(&messages, UiMessage::LastPlayedFailed(err.to_string())),
+                Err(err) => {
+                    Self::push_message(&messages, UiMessage::LastPlayedFailed(err.to_string()))
+                }
             }
         });
     }
@@ -404,13 +416,7 @@ impl SlimJellyApp {
 
             match client.fetch_image_bytes(&url).await {
                 Ok(bytes) => {
-                    Self::push_message(
-                        &messages,
-                        UiMessage::ThumbnailLoaded {
-                            key,
-                            bytes,
-                        },
-                    );
+                    Self::push_message(&messages, UiMessage::ThumbnailLoaded { key, bytes });
                 }
                 Err(err) => {
                     Self::push_message(
@@ -429,7 +435,10 @@ impl SlimJellyApp {
         let username = self.config.server.username.trim().to_string();
         let password = self.login_password.clone();
 
-        if self.config.server.base_url.trim().is_empty() || username.is_empty() || password.is_empty() {
+        if self.config.server.base_url.trim().is_empty()
+            || username.is_empty()
+            || password.is_empty()
+        {
             self.status_line = "Set server URL, username, and password".to_string();
             return;
         }
@@ -450,10 +459,7 @@ impl SlimJellyApp {
                 Ok(auth) => {
                     let token = auth.access_token.unwrap_or_default();
                     let user = auth.user;
-                    let user_id = user
-                        .as_ref()
-                        .and_then(|u| u.id.clone())
-                        .unwrap_or_default();
+                    let user_id = user.as_ref().and_then(|u| u.id.clone()).unwrap_or_default();
                     let user_name = user
                         .as_ref()
                         .and_then(|u| u.name.clone())
@@ -618,7 +624,9 @@ impl SlimJellyApp {
         self.runtime.spawn(async move {
             match client.mark_played(&session.user_id, &item_id).await {
                 Ok(()) => Self::push_message(&messages, UiMessage::MarkPlayedDone { item_id }),
-                Err(err) => Self::push_message(&messages, UiMessage::MarkPlayedFailed(err.to_string())),
+                Err(err) => {
+                    Self::push_message(&messages, UiMessage::MarkPlayedFailed(err.to_string()))
+                }
             }
         });
     }
@@ -671,7 +679,13 @@ impl SlimJellyApp {
             .as_ref()
             .and_then(|item| item.r#type.clone())
             .map(|item_type| vec![item_type])
-            .unwrap_or_else(|| vec!["Movie".to_string(), "Series".to_string(), "Episode".to_string()]);
+            .unwrap_or_else(|| {
+                vec![
+                    "Movie".to_string(),
+                    "Series".to_string(),
+                    "Episode".to_string(),
+                ]
+            });
         let include_types_owned = include_types.clone();
 
         self.status_line = "Selecting a random item...".to_string();
@@ -691,7 +705,9 @@ impl SlimJellyApp {
                     } else {
                         Self::push_message(
                             &messages,
-                            UiMessage::ShuffleItemFailed("No item available for shuffle".to_string()),
+                            UiMessage::ShuffleItemFailed(
+                                "No item available for shuffle".to_string(),
+                            ),
                         );
                     }
                 }
@@ -739,7 +755,9 @@ impl SlimJellyApp {
             Screen::Search => pick_from(&self.items),
             Screen::Collections => pick_from(&self.collection_items),
             Screen::Playlists => pick_from(&self.playlist_items),
-            Screen::Details => pick_from(&self.detail_related).or_else(|| pick_from(&self.detail_episodes)),
+            Screen::Details => {
+                pick_from(&self.detail_related).or_else(|| pick_from(&self.detail_episodes))
+            }
             Screen::Admin | Screen::Settings | Screen::Login => None,
         }
     }
@@ -774,7 +792,9 @@ impl SlimJellyApp {
                         item_id,
                     },
                 ),
-                Err(err) => Self::push_message(&messages, UiMessage::PlaylistAddFailed(err.to_string())),
+                Err(err) => {
+                    Self::push_message(&messages, UiMessage::PlaylistAddFailed(err.to_string()))
+                }
             }
         });
     }
@@ -794,8 +814,12 @@ impl SlimJellyApp {
         let messages = self.messages.clone();
         self.runtime.spawn(async move {
             match client.virtual_folders().await {
-                Ok(folders) => Self::push_message(&messages, UiMessage::VirtualFoldersLoaded(folders)),
-                Err(err) => Self::push_message(&messages, UiMessage::VirtualFoldersFailed(err.to_string())),
+                Ok(folders) => {
+                    Self::push_message(&messages, UiMessage::VirtualFoldersLoaded(folders))
+                }
+                Err(err) => {
+                    Self::push_message(&messages, UiMessage::VirtualFoldersFailed(err.to_string()))
+                }
             }
         });
     }
@@ -822,7 +846,9 @@ impl SlimJellyApp {
         self.runtime.spawn(async move {
             match client.delete_item(&item_id).await {
                 Ok(()) => Self::push_message(&messages, UiMessage::DeleteItemDone { item_id }),
-                Err(err) => Self::push_message(&messages, UiMessage::DeleteItemFailed(err.to_string())),
+                Err(err) => {
+                    Self::push_message(&messages, UiMessage::DeleteItemFailed(err.to_string()))
+                }
             }
         });
     }
@@ -849,7 +875,9 @@ impl SlimJellyApp {
         self.runtime.spawn(async move {
             match client.remove_virtual_folder(&name, true).await {
                 Ok(()) => Self::push_message(&messages, UiMessage::DeleteLibraryDone { name }),
-                Err(err) => Self::push_message(&messages, UiMessage::DeleteLibraryFailed(err.to_string())),
+                Err(err) => {
+                    Self::push_message(&messages, UiMessage::DeleteLibraryFailed(err.to_string()))
+                }
             }
         });
     }
@@ -866,7 +894,10 @@ impl SlimJellyApp {
         let messages = self.messages.clone();
         self.runtime.spawn(async move {
             match client.item_refresh(&item_id).await {
-                Ok(()) => Self::push_message(&messages, UiMessage::ActionDone("Refresh triggered".to_string())),
+                Ok(()) => Self::push_message(
+                    &messages,
+                    UiMessage::ActionDone("Refresh triggered".to_string()),
+                ),
                 Err(err) => Self::push_message(&messages, UiMessage::ActionFailed(err.to_string())),
             }
         });
@@ -1064,7 +1095,8 @@ impl SlimJellyApp {
                 PlayerKind::Vlc => None,
             };
 
-            let (bin, args_prefix) = self.player_command_for(player_kind, mpv_socket_path.as_deref());
+            let (bin, args_prefix) =
+                self.player_command_for(player_kind, mpv_socket_path.as_deref());
             let mut cmd = std::process::Command::new(&bin);
             for arg in args_prefix {
                 cmd.arg(arg);
@@ -1088,7 +1120,8 @@ impl SlimJellyApp {
         let Some((player_kind, mpv_socket_path, child)) = launched else {
             if !used_transcode {
                 if let Some(retry_url) = transcode_stream_url {
-                    self.status_line = "Direct launch failed, retrying with transcode...".to_string();
+                    self.status_line =
+                        "Direct launch failed, retrying with transcode...".to_string();
                     self.launch_external_player(
                         item_id,
                         retry_url,
@@ -1153,7 +1186,9 @@ impl SlimJellyApp {
         self.spawn_progress_loop(
             item_id,
             media_source_id,
-            self.playback.as_ref().and_then(|p| p.play_session_id.clone()),
+            self.playback
+                .as_ref()
+                .and_then(|p| p.play_session_id.clone()),
             player_kind,
             mpv_socket_for_loop,
             generation,
@@ -1208,7 +1243,9 @@ impl SlimJellyApp {
 
             match client.report_playing_stopped(&payload).await {
                 Ok(()) => Self::push_message(&messages, UiMessage::PlaybackStopped),
-                Err(err) => Self::push_message(&messages, UiMessage::ProgressFailed(err.to_string())),
+                Err(err) => {
+                    Self::push_message(&messages, UiMessage::ProgressFailed(err.to_string()))
+                }
             }
         });
     }
@@ -1366,7 +1403,10 @@ impl SlimJellyApp {
         let messages = self.messages.clone();
         self.runtime.spawn(async move {
             match client.library_refresh_all().await {
-                Ok(()) => Self::push_message(&messages, UiMessage::ActionDone("Library scan started".to_string())),
+                Ok(()) => Self::push_message(
+                    &messages,
+                    UiMessage::ActionDone("Library scan started".to_string()),
+                ),
                 Err(err) => Self::push_message(&messages, UiMessage::ActionFailed(err.to_string())),
             }
         });
@@ -1420,6 +1460,175 @@ impl SlimJellyApp {
         self.admin_selected_virtual_folder_name = None;
         self.admin_delete_item_confirm.clear();
         self.admin_delete_library_confirm.clear();
+        self.cleanup_subtitle_temp();
+        self.subtitle_search_results.clear();
+        self.subtitle_panel_open = false;
+        self.subtitle_os_token = None;
         self.status_line = "Logged out".to_string();
+    }
+
+    pub(super) fn search_subtitles(&mut self) {
+        let api_key = self.config.subtitles.api_key.trim().to_string();
+        if api_key.is_empty() {
+            self.status_line = "Set OpenSubtitles API key in Settings first".to_string();
+            return;
+        }
+
+        let query = self
+            .selected_item
+            .as_ref()
+            .and_then(|item| item.name.clone())
+            .unwrap_or_default();
+        if query.is_empty() {
+            self.status_line = "Selected item has no name to search".to_string();
+            return;
+        }
+
+        let language = self.subtitle_search_language.trim().to_string();
+        self.subtitle_search_loading = true;
+        self.subtitle_search_results.clear();
+        self.status_line = format!("Searching subtitles for \"{query}\"...");
+
+        let messages = self.messages.clone();
+        self.runtime.spawn(async move {
+            let client = match crate::subtitles::OpenSubtitlesClient::new(&api_key) {
+                Ok(c) => c,
+                Err(err) => {
+                    Self::push_message(&messages, UiMessage::SubtitleSearchFailed(err.to_string()));
+                    return;
+                }
+            };
+
+            match client.search(&query, &language).await {
+                Ok(response) => {
+                    let results = response.data.unwrap_or_default();
+                    Self::push_message(&messages, UiMessage::SubtitleSearchResults(results));
+                }
+                Err(err) => {
+                    Self::push_message(&messages, UiMessage::SubtitleSearchFailed(err.to_string()));
+                }
+            }
+        });
+    }
+
+    pub(super) fn download_subtitle(&mut self, file_id: i64, file_name: String) {
+        let api_key = self.config.subtitles.api_key.trim().to_string();
+        if api_key.is_empty() {
+            self.status_line = "Set OpenSubtitles API key in Settings first".to_string();
+            return;
+        }
+
+        let os_username = self.config.subtitles.username.trim().to_string();
+        let os_password = self.config.subtitles.password.clone();
+        let cached_token = self.subtitle_os_token.clone();
+
+        if cached_token.is_none() && (os_username.is_empty() || os_password.is_empty()) {
+            self.status_line =
+                "Set OpenSubtitles username and password in Settings for downloads".to_string();
+            return;
+        }
+
+        self.status_line = format!("Downloading subtitle: {file_name}...");
+        let messages = self.messages.clone();
+
+        self.runtime.spawn(async move {
+            let client = match crate::subtitles::OpenSubtitlesClient::new(&api_key) {
+                Ok(c) => c,
+                Err(err) => {
+                    Self::push_message(
+                        &messages,
+                        UiMessage::SubtitleDownloadFailed(err.to_string()),
+                    );
+                    return;
+                }
+            };
+
+            // Login if no cached token
+            let token = if let Some(tok) = cached_token {
+                tok
+            } else {
+                match client.login(&os_username, &os_password).await {
+                    Ok(tok) => tok,
+                    Err(err) => {
+                        Self::push_message(
+                            &messages,
+                            UiMessage::SubtitleDownloadFailed(format!("OS login failed: {err}")),
+                        );
+                        return;
+                    }
+                }
+            };
+
+            // Request download link
+            let download_resp = match client.download(file_id, &token).await {
+                Ok(resp) => resp,
+                Err(err) => {
+                    Self::push_message(
+                        &messages,
+                        UiMessage::SubtitleDownloadFailed(err.to_string()),
+                    );
+                    return;
+                }
+            };
+
+            let Some(link) = download_resp.link else {
+                Self::push_message(
+                    &messages,
+                    UiMessage::SubtitleDownloadFailed("No download link in response".to_string()),
+                );
+                return;
+            };
+
+            // Fetch the actual subtitle file
+            let bytes = match client.fetch_subtitle_bytes(&link).await {
+                Ok(b) => b,
+                Err(err) => {
+                    Self::push_message(
+                        &messages,
+                        UiMessage::SubtitleDownloadFailed(err.to_string()),
+                    );
+                    return;
+                }
+            };
+
+            // Save to temp directory
+            let actual_name = download_resp
+                .file_name
+                .clone()
+                .filter(|n| !n.is_empty())
+                .unwrap_or_else(|| file_name.clone());
+            let temp_path = std::env::temp_dir().join(format!("slimjelly-sub-{actual_name}"));
+
+            if let Err(err) = std::fs::write(&temp_path, &bytes) {
+                Self::push_message(
+                    &messages,
+                    UiMessage::SubtitleDownloadFailed(format!("Failed to write file: {err}")),
+                );
+                return;
+            }
+
+            let path_str = temp_path.to_string_lossy().to_string();
+            log::info!("subtitle saved to temp: {path_str}");
+
+            Self::push_message(
+                &messages,
+                UiMessage::SubtitleDownloaded {
+                    file_name: actual_name,
+                    path: path_str,
+                },
+            );
+        });
+    }
+
+    pub(super) fn cleanup_subtitle_temp(&mut self) {
+        if let Some(path) = self.subtitle_temp_path.take() {
+            if let Err(err) = std::fs::remove_file(&path) {
+                log::debug!("failed to remove temp subtitle {path}: {err}");
+            } else {
+                log::info!("cleaned up temp subtitle: {path}");
+            }
+        }
+        self.subtitle_search_results.clear();
+        self.subtitle_panel_open = false;
     }
 }
