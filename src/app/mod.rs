@@ -218,7 +218,6 @@ pub struct SlimJellyApp {
     current_screen: Screen,
     detail_return_screen: Screen,
     current_library_section: LibrarySection,
-    sidebar_width: f32,
     hero_index: usize,
     login_password: String,
     status_line: String,
@@ -286,7 +285,6 @@ impl SlimJellyApp {
             current_screen: Screen::Login,
             detail_return_screen: Screen::Home,
             current_library_section: LibrarySection::Movies,
-            sidebar_width: 236.0,
             hero_index: 0,
             login_password: String::new(),
             status_line: "Ready".to_string(),
@@ -434,7 +432,25 @@ impl SlimJellyApp {
         self.client.lock().ok()?.as_ref().cloned()
     }
 
-    fn image_tag_for_item(item: &BaseItemDto) -> Option<&str> {
+    fn image_tag_for_item<'a>(item: &'a BaseItemDto, image_type: &str) -> Option<&'a str> {
+        if image_type.eq_ignore_ascii_case("Backdrop") {
+            return item
+                .image_tags
+                .as_ref()
+                .and_then(|tags| tags.backdrop.as_deref())
+                .or_else(|| {
+                    item.image_tags
+                        .as_ref()
+                        .and_then(|tags| tags.thumb.as_deref())
+                })
+                .or_else(|| {
+                    item.image_tags
+                        .as_ref()
+                        .and_then(|tags| tags.primary.as_deref())
+                })
+                .or(item.primary_image_tag.as_deref());
+        }
+
         item.primary_image_tag
             .as_deref()
             .or_else(|| {
@@ -446,6 +462,11 @@ impl SlimJellyApp {
                 item.image_tags
                     .as_ref()
                     .and_then(|tags| tags.thumb.as_deref())
+            })
+            .or_else(|| {
+                item.image_tags
+                    .as_ref()
+                    .and_then(|tags| tags.backdrop.as_deref())
             })
     }
 
