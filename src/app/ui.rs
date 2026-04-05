@@ -171,30 +171,39 @@ impl SlimJellyApp {
 
                     if self.detail_seasons.is_empty() {
                         self.detail_selected_season_id = None;
+                        self.detail_preferred_season_id = None;
+                        self.detail_pending_next_season_id = None;
                         self.detail_episodes.clear();
                         continue;
                     }
 
-                    let selected_exists = self
-                        .detail_selected_season_id
-                        .as_deref()
-                        .map(|selected| {
-                            self.detail_seasons
-                                .iter()
-                                .any(|season| season.id.as_deref() == Some(selected))
-                        })
-                        .unwrap_or(false);
+                    let target_id = self
+                        .detail_pending_next_season_id
+                        .take()
+                        .or_else(|| self.detail_preferred_season_id.clone())
+                        .or_else(|| self.detail_selected_season_id.clone());
 
-                    if !selected_exists {
-                        if let Some(first_id) =
-                            self.detail_seasons.first().and_then(|s| s.id.clone())
-                        {
-                            self.choose_detail_season(first_id);
+                    if let Some(target_id) = target_id {
+                        let exists = self
+                            .detail_seasons
+                            .iter()
+                            .any(|season| season.id.as_deref() == Some(target_id.as_str()));
+                        if exists {
+                            let should_reload = self.detail_selected_season_id.as_deref()
+                                != Some(target_id.as_str())
+                                || self.detail_episodes.is_empty();
+                            self.detail_selected_season_id = Some(target_id.clone());
+                            self.detail_preferred_season_id = Some(target_id.clone());
+                            if should_reload {
+                                self.detail_episodes.clear();
+                                self.load_detail_episodes(target_id);
+                            }
+                            continue;
                         }
-                    } else if self.detail_episodes.is_empty() {
-                        if let Some(selected_id) = self.detail_selected_season_id.clone() {
-                            self.choose_detail_season(selected_id);
-                        }
+                    }
+
+                    if let Some(first_id) = self.detail_seasons.first().and_then(|s| s.id.clone()) {
+                        self.choose_detail_season(first_id);
                     }
                 }
                 UiMessage::DetailSeasonsFailed(message) => {
@@ -202,7 +211,29 @@ impl SlimJellyApp {
                 }
                 UiMessage::DetailEpisodesLoaded { season_id, items } => {
                     if self.detail_selected_season_id.as_deref() == Some(season_id.as_str()) {
+                        self.detail_preferred_season_id = Some(season_id.clone());
                         self.detail_episodes = items;
+
+                        let should_open_first_next_episode = self
+                            .detail_pending_next_season_id
+                            .as_deref()
+                            .map(|pending| pending == season_id.as_str())
+                            .unwrap_or(false);
+
+                        if should_open_first_next_episode {
+                            self.detail_pending_next_season_id = None;
+
+                            if let Some(first_episode) =
+                                Self::sorted_episode_items(&self.detail_episodes)
+                                    .into_iter()
+                                    .next()
+                            {
+                                self.open_item_details(first_episode, self.detail_return_screen);
+                            } else {
+                                self.status_line =
+                                    "No episodes found in the next season".to_string();
+                            }
+                        }
                     }
                 }
                 UiMessage::DetailEpisodesFailed(message) => {
@@ -276,6 +307,7 @@ impl SlimJellyApp {
                 }
                 UiMessage::PlaybackPrepared {
                     item_id,
+                    run_time_ticks,
                     stream_url,
                     transcode_stream_url,
                     used_transcode,
@@ -284,6 +316,7 @@ impl SlimJellyApp {
                 } => {
                     self.launch_external_player(
                         item_id,
+                        run_time_ticks,
                         stream_url,
                         media_source_id,
                         play_session_id,
@@ -323,6 +356,7 @@ impl SlimJellyApp {
 
                                 self.launch_external_player(
                                     playback.item_id.clone(),
+                                    playback.run_time_ticks,
                                     fallback_url.unwrap_or_default(),
                                     playback.media_source_id.clone(),
                                     playback.play_session_id.clone(),
@@ -354,10 +388,31 @@ impl SlimJellyApp {
                 UiMessage::ProgressFailed(message) => {
                     self.status_line = format!("Progress sync error: {message}");
                 }
-                UiMessage::PlaybackStopped => {
+                UiMessage::PlaybackStopped { item_id } => {
                     if self.playback.is_some() {
                         self.playback = None;
                         self.cleanup_subtitle_temp();
+                    }
+
+                    if self.current_screen == Screen::Details {
+                        self.load_item_detail(item_id.clone());
+                    }
+                    self.load_home_sections();
+                    self.load_last_played();
+
+                    if self.current_screen == Screen::Libraries {
+                        self.load_library_items(self.current_library_section);
+                    }
+                    if self.current_screen == Screen::Collections {
+                        self.load_collections();
+                    }
+                    if self.current_screen == Screen::Search {
+                        self.search_items();
+                    }
+                    if self.current_screen == Screen::Playlists {
+                        if let Some(playlist_id) = self.selected_playlist_id.clone() {
+                            self.load_playlist_items(playlist_id);
+                        }
                     }
                 }
                 UiMessage::TasksLoaded(tasks) => {
@@ -1072,10 +1127,21 @@ impl SlimJellyApp {
         let compact = Self::is_compact_layout(ui);
         let (card_width, image_size) = Self::card_dimensions(compact);
         let mut clicked = false;
+        let watched = Self::is_item_watched(item);
+        let frame_fill = if watched {
+            Color32::from_rgb(15, 28, 22)
+        } else {
+            Color32::from_rgb(18, 21, 27)
+        };
+        let frame_stroke = if watched {
+            Color32::from_rgb(52, 95, 76)
+        } else {
+            Color32::from_rgb(43, 48, 58)
+        };
 
         let frame = egui::Frame::group(ui.style())
-            .fill(Color32::from_rgb(18, 21, 27))
-            .stroke(Stroke::new(1.0, Color32::from_rgb(43, 48, 58)))
+            .fill(frame_fill)
+            .stroke(Stroke::new(1.0, frame_stroke))
             .inner_margin(egui::Margin::symmetric(8, 8))
             .show(ui, |ui| {
                 ui.set_width(card_width);
@@ -1088,10 +1154,20 @@ impl SlimJellyApp {
                 }
 
                 let title = item.name.clone().unwrap_or_else(|| "Untitled".to_string());
-                if ui.link(title).clicked() {
+                if watched {
+                    ui.label(
+                        RichText::new(format!("{}  Watched", title))
+                            .color(Color32::from_rgb(128, 201, 162)),
+                    );
+                } else if ui.link(title).clicked() {
                     clicked = true;
                 }
-                ui.label(RichText::new(self.item_subtitle(item)).weak().small());
+
+                if watched {
+                    ui.label(RichText::new(self.item_subtitle(item)).small());
+                } else {
+                    ui.label(RichText::new(self.item_subtitle(item)).weak().small());
+                }
 
                 if show_progress {
                     if let Some(progress) = Self::item_progress(item) {
@@ -1229,6 +1305,13 @@ impl SlimJellyApp {
         }
 
         Some((position as f32 / total as f32).clamp(0.0, 1.0))
+    }
+
+    fn is_item_watched(item: &BaseItemDto) -> bool {
+        item.user_data
+            .as_ref()
+            .and_then(|data| data.played)
+            .unwrap_or(false)
     }
 
     fn item_subtitle(&self, item: &BaseItemDto) -> String {
@@ -1578,16 +1661,19 @@ impl SlimJellyApp {
         if compact {
             ui.horizontal_wrapped(|ui| {
                 self.draw_details_action_buttons(ui, item);
+                self.draw_episode_navigation_buttons(ui, item);
             });
         } else {
             ui.horizontal(|ui| {
                 self.draw_details_action_buttons(ui, item);
+                self.draw_episode_navigation_buttons(ui, item);
             });
         }
     }
 
     fn draw_details_action_buttons(&mut self, ui: &mut egui::Ui, item: &BaseItemDto) {
         let can_resume = Self::item_progress(item).map(|v| v > 0.0).unwrap_or(false);
+        let watched = Self::is_item_watched(item);
         let play_label = if can_resume { "Resume" } else { "Play" };
         if ui
             .add(
@@ -1601,9 +1687,13 @@ impl SlimJellyApp {
             self.start_playback();
         }
 
-        if ui.button("Mark Played").clicked() {
+        if !watched && ui.button("Mark Played").clicked() {
             self.selected_item = Some(item.clone());
             self.mark_selected_item_played();
+        }
+
+        if watched {
+            ui.label(RichText::new("Watched").color(Color32::from_rgb(128, 201, 162)));
         }
 
         if ui.button("Shuffle").clicked() {
@@ -1640,7 +1730,7 @@ impl SlimJellyApp {
         });
 
         ui.menu_button("More", |ui| {
-            if ui.button("Mark Unplayed").clicked() {
+            if watched && ui.button("Mark Unplayed").clicked() {
                 self.selected_item = Some(item.clone());
                 self.mark_selected_item_unplayed();
                 ui.close_menu();
@@ -1670,6 +1760,160 @@ impl SlimJellyApp {
                     .weak(),
             );
         });
+    }
+
+    fn draw_episode_navigation_buttons(&mut self, ui: &mut egui::Ui, item: &BaseItemDto) {
+        let is_episode = item
+            .r#type
+            .as_deref()
+            .map(|item_type| item_type.eq_ignore_ascii_case("Episode"))
+            .unwrap_or(false);
+        if !is_episode {
+            return;
+        }
+
+        let Some(item_id) = item.id.as_deref() else {
+            ui.add_enabled(false, egui::Button::new("Previous"))
+                .on_hover_text("Episode metadata unavailable");
+            ui.add_enabled(false, egui::Button::new("Next"))
+                .on_hover_text("Episode metadata unavailable");
+            return;
+        };
+
+        let ordered_episodes = Self::sorted_episode_items(&self.detail_episodes);
+        let current_index = ordered_episodes
+            .iter()
+            .position(|episode| episode.id.as_deref() == Some(item_id));
+
+        let previous_episode = current_index
+            .and_then(|idx| idx.checked_sub(1))
+            .and_then(|idx| ordered_episodes.get(idx))
+            .cloned();
+
+        let next_episode = current_index
+            .and_then(|idx| ordered_episodes.get(idx.saturating_add(1)))
+            .cloned();
+
+        let on_last_in_season = current_index
+            .map(|idx| idx.saturating_add(1) == ordered_episodes.len())
+            .unwrap_or(false);
+
+        let next_season_id = if on_last_in_season && next_episode.is_none() {
+            self.next_numbered_season_id_for_episode(item)
+        } else {
+            None
+        };
+
+        let previous_clicked = if previous_episode.is_some() {
+            ui.add_enabled(true, egui::Button::new("Previous")).clicked()
+        } else {
+            ui.add_enabled(false, egui::Button::new("Previous"))
+                .on_hover_text("First episode")
+                .clicked()
+        };
+        if previous_clicked {
+            if let Some(previous_episode) = previous_episode {
+                self.open_item_details(previous_episode, self.detail_return_screen);
+            }
+        }
+
+        if next_season_id.is_some() {
+            ui.label(
+                RichText::new("Season finale")
+                    .small()
+                    .color(Color32::from_rgb(194, 96, 112)),
+            );
+        }
+
+        let next_label = if next_season_id.is_some() {
+            "Next Season"
+        } else {
+            "Next"
+        };
+        let next_enabled = next_episode.is_some() || next_season_id.is_some();
+        let next_clicked = if next_enabled {
+            ui.add_enabled(true, egui::Button::new(next_label)).clicked()
+        } else {
+            let disabled_reason = if current_index.is_none() {
+                "Loading episode order"
+            } else {
+                "Series finale"
+            };
+            ui.add_enabled(false, egui::Button::new(next_label))
+                .on_hover_text(disabled_reason)
+                .clicked()
+        };
+        if next_clicked {
+            if let Some(next_episode) = next_episode {
+                self.open_item_details(next_episode, self.detail_return_screen);
+            } else if let Some(next_season_id) = next_season_id {
+                self.detail_selected_season_id = Some(next_season_id.clone());
+                self.detail_preferred_season_id = Some(next_season_id.clone());
+                self.detail_pending_next_season_id = Some(next_season_id.clone());
+                self.detail_episodes.clear();
+                self.load_detail_episodes(next_season_id);
+            }
+        }
+    }
+
+    fn next_numbered_season_id_for_episode(&self, episode: &BaseItemDto) -> Option<String> {
+        let mut numbered_seasons = self
+            .detail_seasons
+            .iter()
+            .filter_map(|season| {
+                let season_id = season.id.clone()?;
+                let season_number = season.index_number?;
+                (season_number > 0).then_some((season_number, season_id))
+            })
+            .collect::<Vec<_>>();
+
+        numbered_seasons.sort_by_key(|(season_number, _)| *season_number);
+
+        let current_season_id = episode
+            .season_id
+            .clone()
+            .or_else(|| episode.parent_id.clone())
+            .or_else(|| self.detail_selected_season_id.clone());
+
+        if let Some(current_season_id) = current_season_id {
+            if let Some(position) = numbered_seasons
+                .iter()
+                .position(|(_, season_id)| season_id == &current_season_id)
+            {
+                return numbered_seasons.get(position + 1).map(|(_, id)| id.clone());
+            }
+        }
+
+        let current_season_number = episode
+            .parent_index_number
+            .filter(|number| *number > 0)
+            .or_else(|| {
+                self.detail_selected_season_id.as_deref().and_then(|selected_id| {
+                    self.detail_seasons
+                        .iter()
+                        .find(|season| season.id.as_deref() == Some(selected_id))
+                        .and_then(|season| season.index_number)
+                        .filter(|number| *number > 0)
+                })
+            });
+
+        current_season_number.and_then(|current_number| {
+            numbered_seasons
+                .into_iter()
+                .find(|(season_number, _)| *season_number > current_number)
+                .map(|(_, season_id)| season_id)
+        })
+    }
+
+    fn sorted_episode_items(items: &[BaseItemDto]) -> Vec<BaseItemDto> {
+        let mut episodes = items.to_vec();
+        episodes.sort_by(|a, b| {
+            a.index_number
+                .unwrap_or(i32::MAX)
+                .cmp(&b.index_number.unwrap_or(i32::MAX))
+                .then_with(|| a.name.as_deref().unwrap_or("").cmp(b.name.as_deref().unwrap_or("")))
+        });
+        episodes
     }
 
     fn draw_detail_seasons_section(&mut self, ui: &mut egui::Ui, item: &BaseItemDto) {
@@ -1740,13 +1984,19 @@ impl SlimJellyApp {
                     return;
                 }
 
-                let episodes = self.detail_episodes.clone();
+                let episodes = Self::sorted_episode_items(&self.detail_episodes);
                 egui::ScrollArea::vertical()
                     .id_salt("detail_episodes_list")
                     .max_height(280.0)
                     .show(ui, |ui| {
                         for episode in &episodes {
+                            let watched = Self::is_item_watched(episode);
                             egui::Frame::group(ui.style())
+                                .fill(if watched {
+                                    Color32::from_rgb(17, 31, 24)
+                                } else {
+                                    Color32::from_rgb(20, 22, 28)
+                                })
                                 .inner_margin(egui::Margin::symmetric(8, 8))
                                 .show(ui, |ui| {
                                     ui.horizontal(|ui| {
@@ -1767,7 +2017,28 @@ impl SlimJellyApp {
 
                                         ui.vertical(|ui| {
                                             let episode_title = Self::episode_title(episode);
-                                            if ui.link(episode_title).clicked() {
+                                            if watched {
+                                                if ui
+                                                    .add(
+                                                        egui::Label::new(
+                                                            RichText::new(format!(
+                                                                "{}  Watched",
+                                                                episode_title
+                                                            ))
+                                                            .color(Color32::from_rgb(
+                                                                128, 201, 162,
+                                                            )),
+                                                        )
+                                                        .sense(egui::Sense::click()),
+                                                    )
+                                                    .clicked()
+                                                {
+                                                    self.open_item_details(
+                                                        episode.clone(),
+                                                        self.detail_return_screen,
+                                                    );
+                                                }
+                                            } else if ui.link(episode_title).clicked() {
                                                 self.open_item_details(
                                                     episode.clone(),
                                                     self.detail_return_screen,

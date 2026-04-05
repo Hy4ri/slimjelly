@@ -173,6 +173,8 @@ impl SlimJellyApp {
         let Some(item) = self.selected_item.clone() else {
             self.detail_seasons.clear();
             self.detail_selected_season_id = None;
+            self.detail_preferred_season_id = None;
+            self.detail_pending_next_season_id = None;
             self.detail_episodes.clear();
             self.detail_related.clear();
             self.detail_media_source = None;
@@ -181,10 +183,46 @@ impl SlimJellyApp {
 
         let item_type = item.r#type.clone().unwrap_or_default();
         if item_type.eq_ignore_ascii_case("Series") {
+            self.detail_pending_next_season_id = None;
             self.load_detail_seasons();
+        } else if item_type.eq_ignore_ascii_case("Episode") {
+            self.detail_pending_next_season_id = None;
+            let mut has_context = false;
+            self.detail_seasons.clear();
+
+            if let Some(season_id) = item
+                .season_id
+                .clone()
+                .or_else(|| item.parent_id.clone())
+            {
+                self.detail_selected_season_id = Some(season_id.clone());
+                self.detail_preferred_season_id = Some(season_id.clone());
+                self.detail_episodes.clear();
+                self.detail_pending_next_season_id = None;
+                self.load_detail_episodes(season_id);
+                has_context = true;
+            } else {
+                self.detail_selected_season_id = None;
+                self.detail_preferred_season_id = None;
+                self.detail_episodes.clear();
+            }
+
+            if let Some(series_id) = item.series_id.clone() {
+                self.load_detail_seasons_for_series(series_id);
+                has_context = true;
+            }
+
+            if !has_context {
+                self.detail_selected_season_id = None;
+                self.detail_preferred_season_id = None;
+                self.detail_pending_next_season_id = None;
+                self.detail_episodes.clear();
+            }
         } else {
             self.detail_seasons.clear();
             self.detail_selected_season_id = None;
+            self.detail_preferred_season_id = None;
+            self.detail_pending_next_season_id = None;
             self.detail_episodes.clear();
         }
 
@@ -194,24 +232,23 @@ impl SlimJellyApp {
 
     pub(super) fn choose_detail_season(&mut self, season_id: String) {
         self.detail_selected_season_id = Some(season_id.clone());
+        self.detail_preferred_season_id = Some(season_id.clone());
+        self.detail_pending_next_season_id = None;
         self.detail_episodes.clear();
         self.load_detail_episodes(season_id);
     }
 
-    fn load_detail_seasons(&mut self) {
+    fn load_detail_seasons_for_series(&mut self, series_id: String) {
         let Some(client) = self.active_client() else {
             return;
         };
         let Some(session) = self.session.clone() else {
             return;
         };
-        let Some(item_id) = self.selected_item.as_ref().and_then(|item| item.id.clone()) else {
-            return;
-        };
 
         let messages = self.messages.clone();
         self.runtime.spawn(async move {
-            match client.seasons(&session.user_id, &item_id).await {
+            match client.seasons(&session.user_id, &series_id).await {
                 Ok(result) => Self::push_message(
                     &messages,
                     UiMessage::DetailSeasonsLoaded(result.items.unwrap_or_default()),
@@ -223,7 +260,15 @@ impl SlimJellyApp {
         });
     }
 
-    fn load_detail_episodes(&mut self, season_id: String) {
+    fn load_detail_seasons(&mut self) {
+        let Some(item_id) = self.selected_item.as_ref().and_then(|item| item.id.clone()) else {
+            return;
+        };
+
+        self.load_detail_seasons_for_series(item_id);
+    }
+
+    pub(super) fn load_detail_episodes(&mut self, season_id: String) {
         let Some(client) = self.active_client() else {
             return;
         };
@@ -1011,6 +1056,7 @@ impl SlimJellyApp {
                         &messages,
                         UiMessage::PlaybackPrepared {
                             item_id,
+                            run_time_ticks: item.run_time_ticks,
                             stream_url,
                             transcode_stream_url,
                             used_transcode: use_transcode,
@@ -1068,6 +1114,7 @@ impl SlimJellyApp {
     pub(super) fn launch_external_player(
         &mut self,
         item_id: String,
+        run_time_ticks: Option<i64>,
         stream_url: String,
         media_source_id: Option<String>,
         play_session_id: Option<String>,
@@ -1137,6 +1184,7 @@ impl SlimJellyApp {
                         "Direct launch failed, retrying with transcode...".to_string();
                     self.launch_external_player(
                         item_id,
+                        run_time_ticks,
                         retry_url,
                         media_source_id,
                         play_session_id,
@@ -1176,6 +1224,7 @@ impl SlimJellyApp {
         self.playback = Some(super::PlaybackView {
             generation,
             item_id: item_id.clone(),
+            run_time_ticks,
             player_kind,
             mpv_socket_path: mpv_socket_path.clone(),
             used_transcode,
@@ -1244,22 +1293,34 @@ impl SlimJellyApp {
         let Some(client) = self.active_client() else {
             return;
         };
+        let user_id = self.session.as_ref().map(|session| session.user_id.clone());
+        let should_mark_played = SlimJellyApp::should_mark_played_on_stop(&playback, position_ticks);
+        let item_id = playback.item_id;
+        let play_session_id = playback.play_session_id;
+        let media_source_id = playback.media_source_id;
 
         let messages = self.messages.clone();
         self.runtime.spawn(async move {
             let payload = PlaybackStopInfo {
-                item_id: playback.item_id,
-                play_session_id: playback.play_session_id,
+                item_id: item_id.clone(),
+                play_session_id,
                 position_ticks: Some(position_ticks),
-                media_source_id: playback.media_source_id,
+                media_source_id,
             };
 
-            match client.report_playing_stopped(&payload).await {
-                Ok(()) => Self::push_message(&messages, UiMessage::PlaybackStopped),
-                Err(err) => {
-                    Self::push_message(&messages, UiMessage::ProgressFailed(err.to_string()))
+            if let Err(err) = client.report_playing_stopped(&payload).await {
+                Self::push_message(&messages, UiMessage::ProgressFailed(err.to_string()));
+            }
+
+            if should_mark_played {
+                if let Some(user_id) = user_id.as_deref() {
+                    if let Err(err) = client.mark_played(user_id, &item_id).await {
+                        Self::push_message(&messages, UiMessage::ProgressFailed(err.to_string()));
+                    }
                 }
             }
+
+            Self::push_message(&messages, UiMessage::PlaybackStopped { item_id });
         });
     }
 
@@ -1431,9 +1492,35 @@ impl SlimJellyApp {
     }
 
     pub(super) fn save_settings(&mut self) {
+        let username = self.config.subtitles.username.trim().to_string();
+        let password = self.config.subtitles.password.clone();
+        let api_key = self.config.subtitles.api_key.trim().to_string();
+
         match save_config(&self.paths, &self.config) {
-            Ok(()) => self.status_line = "Settings saved".to_string(),
+            Ok(()) => self.status_line = "Settings saved. Validating OpenSubtitles credentials...".to_string(),
             Err(err) => self.status_line = format!("Failed to save settings: {err}"),
+        }
+
+        if !username.is_empty() && !password.is_empty() && !api_key.is_empty() {
+            let messages = self.messages.clone();
+            self.runtime.spawn(async move {
+                match crate::subtitles::OpenSubtitlesClient::new(&api_key) {
+                    Ok(client) => match client.login(&username, &password).await {
+                        Ok(_) => Self::push_message(
+                            &messages,
+                            UiMessage::ActionDone("OpenSubtitles OpenSubtitles credentials are correct.".to_string()),
+                        ),
+                        Err(err) => Self::push_message(
+                            &messages,
+                            UiMessage::ActionFailed(format!("OpenSubtitles login failed: {err}")),
+                        ),
+                    },
+                    Err(e) => Self::push_message(
+                        &messages,
+                        UiMessage::ActionFailed(format!("OpenSubtitles config error: {e}")),
+                    ),
+                }
+            });
         }
     }
 
@@ -1463,6 +1550,8 @@ impl SlimJellyApp {
         self.home_recent_series.clear();
         self.detail_seasons.clear();
         self.detail_selected_season_id = None;
+        self.detail_preferred_season_id = None;
+        self.detail_pending_next_season_id = None;
         self.detail_episodes.clear();
         self.detail_related.clear();
         self.detail_media_source = None;
@@ -1487,11 +1576,29 @@ impl SlimJellyApp {
             return;
         }
 
-        let query = self
-            .selected_item
-            .as_ref()
-            .and_then(|item| item.name.clone())
-            .unwrap_or_default();
+        let item = match &self.selected_item {
+            Some(i) => i,
+            _ => {
+                self.status_line = "No item selected".to_string();
+                return;
+            }
+        };
+
+        let query = if item.r#type.as_deref() == Some("Episode") {
+            let series_name = item.series_name.as_deref().unwrap_or("");
+            let s = item.parent_index_number.unwrap_or(0);
+            let e = item.index_number.unwrap_or(0);
+            if !series_name.is_empty() && s > 0 && e > 0 {
+                format!("{} S{:02}E{:02}", series_name, s, e)
+            } else if !series_name.is_empty() {
+                format!("{} {}", series_name, item.name.as_deref().unwrap_or(""))
+            } else {
+                item.name.clone().unwrap_or_default()
+            }
+        } else {
+            item.name.clone().unwrap_or_default()
+        };
+
         if query.is_empty() {
             self.status_line = "Selected item has no name to search".to_string();
             return;

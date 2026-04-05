@@ -24,6 +24,7 @@ use crate::{
 const MPV_IPC_SOCKET_PATH: &str = "/tmp/slimjelly-mpv.sock";
 const QUICK_EXIT_FALLBACK_SECONDS: u64 = 5;
 const MPV_IPC_TIMEOUT_MS: u64 = 500;
+const WATCHED_COMPLETION_PERCENT: i64 = 90;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PlayerKind {
@@ -127,6 +128,7 @@ enum UiMessage {
     ItemFailed(String),
     PlaybackPrepared {
         item_id: String,
+        run_time_ticks: Option<i64>,
         stream_url: String,
         transcode_stream_url: Option<String>,
         used_transcode: bool,
@@ -143,7 +145,9 @@ enum UiMessage {
         is_paused: bool,
     },
     ProgressFailed(String),
-    PlaybackStopped,
+    PlaybackStopped {
+        item_id: String,
+    },
     TasksLoaded(Vec<TaskInfo>),
     TasksFailed(String),
     ActionDone(String),
@@ -191,6 +195,7 @@ struct SessionView {
 struct PlaybackView {
     generation: u64,
     item_id: String,
+    run_time_ticks: Option<i64>,
     player_kind: PlayerKind,
     mpv_socket_path: Option<String>,
     used_transcode: bool,
@@ -231,6 +236,8 @@ pub struct SlimJellyApp {
     home_recent_series: Vec<BaseItemDto>,
     detail_seasons: Vec<BaseItemDto>,
     detail_selected_season_id: Option<String>,
+    detail_preferred_season_id: Option<String>,
+    detail_pending_next_season_id: Option<String>,
     detail_episodes: Vec<BaseItemDto>,
     detail_related: Vec<BaseItemDto>,
     detail_media_source: Option<MediaSourceInfo>,
@@ -295,6 +302,8 @@ impl SlimJellyApp {
             home_recent_series: Vec::new(),
             detail_seasons: Vec::new(),
             detail_selected_season_id: None,
+            detail_preferred_season_id: None,
+            detail_pending_next_season_id: None,
             detail_episodes: Vec::new(),
             detail_related: Vec::new(),
             detail_media_source: None,
@@ -468,6 +477,21 @@ impl SlimJellyApp {
         }
     }
 
+    fn should_mark_played_on_stop(playback: &PlaybackView, position_ticks: i64) -> bool {
+        let Some(total_ticks) = playback.run_time_ticks else {
+            return false;
+        };
+        if total_ticks <= 0 {
+            return false;
+        }
+
+        let capped_position = position_ticks.max(0).min(total_ticks) as i128;
+        let total = total_ticks as i128;
+
+        capped_position.saturating_mul(100)
+            >= total.saturating_mul(WATCHED_COMPLETION_PERCENT as i128)
+    }
+
     fn pseudo_random_index(len: usize) -> usize {
         if len <= 1 {
             return 0;
@@ -512,6 +536,7 @@ mod tests {
         PlaybackView {
             generation: 1,
             item_id: "item-1".to_string(),
+            run_time_ticks: Some(100_000_000),
             player_kind: PlayerKind::Mpv,
             mpv_socket_path: None,
             used_transcode: false,
@@ -580,5 +605,22 @@ mod tests {
             SlimJellyApp::status_text_for_playback(&playback),
             "Paused (transcode)"
         );
+    }
+
+    #[test]
+    fn marks_played_when_stop_reaches_completion_threshold() {
+        let playback = playback_fixture();
+        assert!(SlimJellyApp::should_mark_played_on_stop(&playback, 90_000_000));
+        assert!(!SlimJellyApp::should_mark_played_on_stop(&playback, 89_000_000));
+    }
+
+    #[test]
+    fn does_not_mark_played_when_runtime_is_unknown() {
+        let mut playback = playback_fixture();
+        playback.run_time_ticks = None;
+        assert!(!SlimJellyApp::should_mark_played_on_stop(
+            &playback,
+            900_000_000
+        ));
     }
 }

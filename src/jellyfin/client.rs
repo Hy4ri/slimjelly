@@ -126,6 +126,7 @@ impl JellyfinClient {
             ("startIndex".to_string(), start_index.to_string()),
             ("limit".to_string(), limit.to_string()),
             ("recursive".to_string(), "true".to_string()),
+            ("enableUserData".to_string(), "true".to_string()),
         ];
 
         if let Some(parent) = parent_id {
@@ -181,6 +182,7 @@ impl JellyfinClient {
         let mut params = vec![
             ("userId".to_string(), user_id.to_string()),
             ("recursive".to_string(), "true".to_string()),
+            ("enableUserData".to_string(), "true".to_string()),
             ("enableImages".to_string(), "true".to_string()),
             ("imageTypeLimit".to_string(), "1".to_string()),
             ("sortBy".to_string(), "DateCreated".to_string()),
@@ -204,6 +206,7 @@ impl JellyfinClient {
         let mut params = vec![
             ("userId".to_string(), user_id.to_string()),
             ("recursive".to_string(), "true".to_string()),
+            ("enableUserData".to_string(), "true".to_string()),
             ("enableImages".to_string(), "true".to_string()),
             ("imageTypeLimit".to_string(), "1".to_string()),
             ("sortBy".to_string(), "Random".to_string()),
@@ -227,6 +230,7 @@ impl JellyfinClient {
         let mut params = vec![
             ("userId".to_string(), user_id.to_string()),
             ("recursive".to_string(), "true".to_string()),
+            ("enableUserData".to_string(), "true".to_string()),
             ("enableImages".to_string(), "true".to_string()),
             ("imageTypeLimit".to_string(), "1".to_string()),
             ("sortBy".to_string(), "SortName".to_string()),
@@ -250,6 +254,7 @@ impl JellyfinClient {
             ("userId".to_string(), user_id.to_string()),
             ("recursive".to_string(), "true".to_string()),
             ("includeItemTypes".to_string(), "BoxSet".to_string()),
+            ("enableUserData".to_string(), "true".to_string()),
             ("enableImages".to_string(), "true".to_string()),
             ("imageTypeLimit".to_string(), "1".to_string()),
             ("sortBy".to_string(), "SortName".to_string()),
@@ -330,6 +335,7 @@ impl JellyfinClient {
             ("parentId".to_string(), season_id.to_string()),
             ("recursive".to_string(), "false".to_string()),
             ("includeItemTypes".to_string(), "Episode".to_string()),
+            ("enableUserData".to_string(), "true".to_string()),
             ("enableImages".to_string(), "true".to_string()),
             ("imageTypeLimit".to_string(), "1".to_string()),
             ("sortBy".to_string(), "SortName".to_string()),
@@ -353,6 +359,7 @@ impl JellyfinClient {
             &[
                 ("userId", user_id),
                 ("limit", &limit_string),
+                ("enableUserData", "true"),
                 ("enableImages", "true"),
                 ("imageTypeLimit", "1"),
             ],

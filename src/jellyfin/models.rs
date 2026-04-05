@@ -59,6 +59,10 @@ pub struct BaseItemDtoQueryResult {
 pub struct BaseItemDto {
     pub id: Option<String>,
     pub name: Option<String>,
+    pub series_name: Option<String>,
+    pub series_id: Option<String>,
+    pub season_id: Option<String>,
+    pub parent_id: Option<String>,
     pub r#type: Option<String>,
     pub media_type: Option<String>,
     pub index_number: Option<i32>,
