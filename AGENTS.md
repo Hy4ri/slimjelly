@@ -1,194 +1,148 @@
 # AGENTS Guide for slimjelly
 
-This file is the working contract for coding agents in this repository.
-Use it as the default implementation standard for all edits.
+This document defines the default expectations for coding agents working in this repository.
+Follow it unless a user request explicitly overrides it.
 
-## Repository Snapshot
-
+## Project Overview
 - Language: Rust (edition 2024)
-- App type: native desktop GUI (`eframe`/`egui`) + async runtime (`tokio`)
 - Crate type: single binary crate (`src/main.rs`)
-- Networking: `reqwest` with `rustls`
+- UI stack: `eframe` + `egui`
+- Async runtime: `tokio` multi-thread runtime
+- HTTP: `reqwest` with `rustls-tls` and JSON support
 - Serialization: `serde`, `serde_json`, `toml`
-- Error model: `AppError` in `src/error.rs` via `thiserror`
+- Error model: centralized `AppError` in `src/error.rs`
+- Persistence: TOML config + encrypted local session token
 
-## Source Layout
+## Repository Layout
+- `src/main.rs`: startup, Linux backend selection, runtime init, app launch
+- `src/app/mod.rs`: app state, message types, `eframe::App` implementation
+- `src/app/actions.rs`: async actions, API calls, playback/settings side effects
+- `src/app/ui.rs`: drawing code, navigation, and message handling
+- `src/app/playback.rs`: mpv IPC polling and exit watcher helpers
+- `src/config.rs`: config schema/defaults, load/save logic, tests
+- `src/secure_store.rs`: encrypted session token storage, tests
+- `src/jellyfin/client.rs`: Jellyfin HTTP wrapper and request helpers, tests
+- `src/jellyfin/models.rs`: Jellyfin DTOs
+- `src/subtitles/client.rs`: OpenSubtitles HTTP wrapper
+- `src/subtitles/models.rs`: OpenSubtitles DTOs
+- `src/error.rs`: shared app error definitions and conversions
+- `build.rs`: Linux runtime env embedding (`RPATH`, `XKB`)
 
-- `src/main.rs`: app startup, runtime init, window boot
-- `src/app.rs`: UI state machine and screen logic
-- `src/config.rs`: config types/defaults + TOML persistence
-- `src/secure_store.rs`: encrypted local session handling
-- `src/jellyfin/client.rs`: Jellyfin HTTP client and endpoint wrappers
-- `src/jellyfin/models.rs`: request/response DTOs
-- `src/error.rs`: central error enum and conversions
-
-## Build, Run, Lint, Test
-
+## Build, Run, Lint, Test Commands
 Run all commands from repository root.
 
-### Build / Check
-
+### Build and check
 - `cargo check`
 - `cargo check --all-targets`
+- `cargo build`
 - `cargo build --release`
-
-Nix/Wayland recommended build:
-
-- `nix develop -c cargo build --release`
-- This bakes runtime RPATH/XKB defaults via build env vars
+- NixOS-friendly build: `nix develop -c cargo build --release`
 
 ### Run
-
 - `cargo run`
-- `RUST_LOG=debug cargo run`
+- Debug logging: `RUST_LOG=debug cargo run`
+- Force X11 backend: `SLIMJELLY_UNIX_BACKEND=x11 cargo run`
+- Force Wayland backend: `SLIMJELLY_UNIX_BACKEND=wayland cargo run`
 
-Linux display backend notes:
-
-- Auto-detect (default): `cargo run`
-- Force X11: `SLIMJELLY_UNIX_BACKEND=x11 cargo run`
-- Force Wayland: `SLIMJELLY_UNIX_BACKEND=wayland cargo run`
-- `WINIT_UNIX_BACKEND` is also respected if `SLIMJELLY_UNIX_BACKEND` is unset
-
-Linux runtime library notes:
-
-- X11 backend requires `libX11` at runtime
-- Wayland backend requires `libwayland-client` at runtime
-- On NixOS, ensure these libraries are present in your shell/system closure (e.g. `xorg.libX11`, `wayland`)
-
-Build-time runtime embedding notes:
-
-- `build.rs` reads `SLIMJELLY_RPATH_LIBS` to inject linker rpath entries
-- `build.rs` reads `SLIMJELLY_XKB_CONFIG_ROOT` to embed default `XKB_CONFIG_ROOT`
-- `flake.nix` sets these automatically in `devShell`
-
-Wayland extra runtime notes:
-
-- Wayland keyboard initialization may require `libxkbcommon` + `xkeyboard-config`
-- If needed, set `XKB_CONFIG_ROOT=<store-path>/share/X11/xkb`
-- OpenGL path may require `mesa` + `libglvnd` for GL/EGL config discovery
-
-### Tests
-
+### Test
 - Full suite: `cargo test`
-- With output: `cargo test -- --nocapture`
+- With stdout/stderr: `cargo test -- --nocapture`
+- List available tests: `cargo test -- --list`
 
-### Run One Test (important)
-
+### Run a single test (important)
 - By function name: `cargo test test_function_name`
 - By module path: `cargo test module::submodule::test_function_name`
-- One integration file: `cargo test --test integration_test_file`
-- One integration test: `cargo test --test integration_test_file test_function_name`
-- Exact name only: `cargo test test_function_name -- --exact`
+- Exact match only: `cargo test test_function_name -- --exact`
+- Single integration test file: `cargo test --test file_name`
+- Single integration test function: `cargo test --test file_name test_function_name`
 
-### Lint / Format
+Examples from this repository:
+- `cargo test app::tests::retry_transcode_when_quick_exit_and_no_progress`
+- `cargo test config::tests::save_config_persists_and_roundtrips`
+- `cargo test jellyfin::client::tests::normalize_base_url_rejects_empty_input`
+- `cargo test secure_store::tests::stores_and_loads_session_roundtrip`
 
+### Lint and format
 - Format: `cargo fmt --all`
 - Format check: `cargo fmt --all -- --check`
 - Clippy strict: `cargo clippy --all-targets --all-features -- -D warnings`
+- If needed: `rustup component add rustfmt && rustup component add clippy`
 
-If `fmt`/`clippy` are missing:
+## Linux and Nix Runtime Notes
+- `build.rs` reads `SLIMJELLY_RPATH_LIBS` and injects linker rpath entries.
+- `build.rs` reads `SLIMJELLY_XKB_CONFIG_ROOT` and embeds a default XKB path.
+- `flake.nix` sets both variables inside `devShell`.
+- X11 runtime needs `libX11`.
+- Wayland runtime often needs `wayland`, `libxkbcommon`, `xkeyboard-config`, `mesa`, `libglvnd`.
+- If keyboard init fails under Wayland, set `XKB_CONFIG_ROOT=<path>/share/X11/xkb`.
 
-- `rustup component add rustfmt`
-- `rustup component add clippy`
+## Code Style and Conventions
 
-## Coding Style Rules
-
-### Formatting and Structure
-
-- Always use rustfmt output; do not hand-format alignment.
-- Keep functions focused; split large mixed-responsibility functions.
+### Formatting and structure
+- Always accept `rustfmt` output; do not hand-format alignment.
+- Keep functions focused; split mixed-responsibility logic into helpers.
 - Prefer guard clauses and early returns over deep nesting.
-- Keep multiline literals/calls trailing-comma friendly.
-- Avoid giant `match` branches that do unrelated work; extract helpers.
+- Keep UI update/render methods lightweight and deterministic.
+- Avoid unrelated refactors in feature or bug-fix patches.
 
 ### Imports
-
-- Import groups should be ordered:
-  1. `std`
-  2. third-party crates
-  3. local crate modules (`crate::...`, `super::...`)
+- Keep import groups ordered: `std`, third-party crates, then local modules.
 - Avoid wildcard imports.
-- Prefer explicit imports for commonly used symbols.
+- Prefer explicit symbols over broad module imports.
 
-### Naming Conventions
-
-- `snake_case`: functions, methods, vars, modules, files.
-- `UpperCamelCase`: structs/enums/traits.
-- `SCREAMING_SNAKE_CASE`: constants/statics.
-- Use explicit names (`play_session_id`, `selected_view_id`, etc.).
-
-### Types and Serialization
-
+### Types and serialization
 - Use explicit types at module boundaries.
-- Keep DTOs aligned with Jellyfin payload contracts.
-- Use serde attributes intentionally (`rename_all`, field renames).
-- Use `Option<T>` only when absence is valid in server/domain semantics.
+- Keep DTO fields aligned with API payload contracts.
+- Use serde attributes intentionally (`rename_all`, explicit renames, skip rules).
+- Use `Option<T>` only when missing values are semantically valid.
+- Keep tick/time conversions explicit and unit-safe.
 
-### Error Handling
+### Naming
+- `snake_case`: functions, methods, variables, modules, files.
+- `UpperCamelCase`: structs, enums, traits.
+- `SCREAMING_SNAKE_CASE`: constants.
+- Prefer descriptive names (`play_session_id`, `selected_playlist_id`, etc.).
 
-- Use `Result<T, AppError>` for fallible app operations.
-- Map external errors via `From` or explicit conversion with context.
-- Include actionable context in messages (`what failed` + reason).
-- Avoid `unwrap()`/`expect()` in production code paths.
-- Reserve panic for impossible states only.
+### Error handling
+- Use `Result<T, AppError>` for fallible operations.
+- Convert external errors via `From` or explicit mapping with context.
+- Include actionable context in error strings.
+- Map non-success HTTP responses to `AppError::ApiStatus`.
+- Avoid `unwrap()`/`expect()` in production paths.
 
-### Async and Concurrency
-
-- Never block the UI thread with network/IO/process work.
-- Spawn async work on Tokio and communicate through app messages.
+### Async and concurrency
+- Never block the UI thread for network, file I/O, or process operations.
+- Spawn async tasks on Tokio and return results through `UiMessage`.
 - Do not hold mutex guards across `.await`.
-- Make background loops cancellable/generation-gated where possible.
+- Use cancellation/generation guards for long-lived background loops.
 
-### Jellyfin Client Rules
+### API and security rules
+- Add Jellyfin endpoints in `src/jellyfin/client.rs`; DTOs in `src/jellyfin/models.rs`.
+- Add OpenSubtitles endpoints in `src/subtitles/client.rs`; DTOs in `src/subtitles/models.rs`.
+- Keep auth header and token handling centralized in client helpers.
+- Treat access tokens, passwords, and API keys as secrets.
+- Never log tokens, auth headers, or signed URLs.
+- Keep self-signed TLS support explicit and opt-in.
 
-- Add endpoint wrappers in `src/jellyfin/client.rs`.
-- Add DTO changes in `src/jellyfin/models.rs`.
-- Normalize and validate server URL input before requests.
-- Check HTTP status and map non-success to `AppError::ApiStatus`.
-- Keep auth header behavior and token handling centralized.
-
-### Security and Secrets
-
-- Treat access tokens/passwords as secrets.
-- Persist sessions via `secure_store` only.
-- Do not log tokens, auth headers, or signed stream URLs.
-- Keep self-signed TLS behavior opt-in and explicit.
-
-### Logging
-
-- Use `log` macros (`debug!`, `info!`, `warn!`, `error!`).
-- Keep logs concise and diagnostic, not noisy.
-- Never emit sensitive user/server credentials.
-
-### UI Behavior
-
-- Keep `egui` `update()` cheap and deterministic.
-- Put expensive work in helpers/tasks; report status to UI.
-- Show progress/status for long operations.
-- Hide admin-only controls for non-admin sessions.
-
-## Testing Guidance
-
-- Add unit tests near logic-heavy modules with `#[cfg(test)]`.
+### Testing guidance
+- Add unit tests near changed logic (`#[cfg(test)]` modules).
 - Keep tests deterministic; avoid live network in unit tests.
-- Isolate URL construction and payload serialization for testability.
-- For secure store changes, test roundtrip + corrupt input handling.
-- Prefer behavior-oriented names (e.g. `loads_session_when_file_valid`).
+- Prefer behavior-based test names.
+- For secure store changes, include roundtrip and corrupted input cases.
+- For URL/request changes, test normalization and query/header behavior.
 
-## Change Scope Rules for Agents
+## Agent Change Scope
+- Make the smallest safe change that solves the requested task.
+- Preserve established architecture and patterns unless asked otherwise.
+- Update docs if behavior or commands change.
+- Never revert unrelated local changes you did not create.
 
-- Make the smallest safe change that solves the task.
-- Do not refactor unrelated code in the same patch.
-- Preserve existing patterns unless asked to redesign.
-- Update docs/config docs when behavior changes.
-
-## Cursor / Copilot Rules
-
+## Cursor and Copilot Instruction Files
 Checked paths:
-
 - `.cursorrules`
 - `.cursor/rules/`
 - `.github/copilot-instructions.md`
 
 Current status: no Cursor or Copilot instruction files were found.
-If those files are added later, treat them as authoritative and merge with this guide.
+If these files are added later, treat them as authoritative and merge their guidance with this file.
+If instructions conflict, follow the most specific repository-local instruction file.
