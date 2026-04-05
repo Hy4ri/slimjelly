@@ -7,6 +7,38 @@ use crate::{config::PreferredPlayer, jellyfin::models::BaseItemDto};
 use super::{LibrarySection, Screen, SessionView, SlimJellyApp, UiMessage};
 
 impl SlimJellyApp {
+    fn refresh_media_views_after_item_state_change(
+        &mut self,
+        detail_item_id: Option<String>,
+        refresh_collections: bool,
+        refresh_search: bool,
+        refresh_playlists: bool,
+    ) {
+        if let Some(item_id) = detail_item_id {
+            if self.current_screen == Screen::Details {
+                self.load_item_detail(item_id);
+            }
+        }
+
+        self.load_home_sections();
+        self.load_last_played();
+
+        if self.current_screen == Screen::Libraries {
+            self.load_library_items(self.current_library_section);
+        }
+        if refresh_collections && self.current_screen == Screen::Collections {
+            self.load_collections();
+        }
+        if refresh_search && self.current_screen == Screen::Search {
+            self.search_items();
+        }
+        if refresh_playlists && self.current_screen == Screen::Playlists {
+            if let Some(playlist_id) = self.selected_playlist_id.clone() {
+                self.load_playlist_items(playlist_id);
+            }
+        }
+    }
+
     fn color_bg() -> Color32 {
         Color32::from_rgb(11, 15, 20)
     }
@@ -272,14 +304,7 @@ impl SlimJellyApp {
                             },
                         );
 
-                        self.refresh_health();
-                        self.load_views();
-                        self.load_home_sections();
-                        self.load_library_items(self.current_library_section);
-                        self.load_collections();
-                        self.load_playlists();
-                        self.load_last_played();
-                        self.search_items();
+                        self.load_post_auth_data();
                     }
                     Err(err) => {
                         self.status_line = format!("Failed to build API client: {err}");
@@ -288,9 +313,7 @@ impl SlimJellyApp {
                 UiMessage::LoginFailed(message) => {
                     self.status_line = format!("Login failed: {message}");
                 }
-                UiMessage::HealthResult { ping, info } => {
-                    self.health_ping = Some(ping);
-                    self.health_info = Some(info);
+                UiMessage::HealthResult => {
                     self.status_line = "Server health updated".to_string();
                 }
                 UiMessage::HealthFailed(message) => {
@@ -616,27 +639,12 @@ impl SlimJellyApp {
                         self.playback = None;
                         self.cleanup_subtitle_temp();
                     }
-
-                    if self.current_screen == Screen::Details {
-                        self.load_item_detail(item_id.clone());
-                    }
-                    self.load_home_sections();
-                    self.load_last_played();
-
-                    if self.current_screen == Screen::Libraries {
-                        self.load_library_items(self.current_library_section);
-                    }
-                    if self.current_screen == Screen::Collections {
-                        self.load_collections();
-                    }
-                    if self.current_screen == Screen::Search {
-                        self.search_items();
-                    }
-                    if self.current_screen == Screen::Playlists {
-                        if let Some(playlist_id) = self.selected_playlist_id.clone() {
-                            self.load_playlist_items(playlist_id);
-                        }
-                    }
+                    self.refresh_media_views_after_item_state_change(
+                        Some(item_id),
+                        true,
+                        true,
+                        true,
+                    );
                 }
                 UiMessage::TasksLoaded(tasks) => {
                     self.tasks = tasks;
@@ -679,28 +687,24 @@ impl SlimJellyApp {
                 }
                 UiMessage::MarkPlayedDone { item_id } => {
                     self.status_line = "Marked played".to_string();
-                    if self.current_screen == Screen::Details {
-                        self.load_item_detail(item_id);
-                    }
-                    self.load_home_sections();
-                    self.load_last_played();
-                    if self.current_screen == Screen::Libraries {
-                        self.load_library_items(self.current_library_section);
-                    }
+                    self.refresh_media_views_after_item_state_change(
+                        Some(item_id),
+                        false,
+                        false,
+                        false,
+                    );
                 }
                 UiMessage::MarkPlayedFailed(message) => {
                     self.status_line = format!("Mark played failed: {message}");
                 }
                 UiMessage::MarkUnplayedDone { item_id } => {
                     self.status_line = "Marked unplayed".to_string();
-                    if self.current_screen == Screen::Details {
-                        self.load_item_detail(item_id);
-                    }
-                    self.load_home_sections();
-                    self.load_last_played();
-                    if self.current_screen == Screen::Libraries {
-                        self.load_library_items(self.current_library_section);
-                    }
+                    self.refresh_media_views_after_item_state_change(
+                        Some(item_id),
+                        false,
+                        false,
+                        false,
+                    );
                 }
                 UiMessage::MarkUnplayedFailed(message) => {
                     self.status_line = format!("Mark unplayed failed: {message}");
@@ -796,6 +800,7 @@ impl SlimJellyApp {
     }
 
     pub(super) fn draw_app_shell(&mut self, ctx: &egui::Context) {
+        debug_assert!(self.current_screen != Screen::Login);
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.current_screen != Screen::Login {
                 Self::draw_centered_content(ui, |ui| self.draw_top_bar(ui));
@@ -809,7 +814,6 @@ impl SlimJellyApp {
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     Self::draw_centered_content(ui, |ui| match self.current_screen {
-                        Screen::Login => self.draw_login(ui),
                         Screen::Home => self.draw_home(ui),
                         Screen::Search => self.draw_search(ui),
                         Screen::Libraries => self.draw_libraries(ui),
@@ -818,6 +822,7 @@ impl SlimJellyApp {
                         Screen::Admin => self.draw_admin(ui),
                         Screen::Settings => self.draw_settings(ui),
                         Screen::Details => self.draw_details(ui),
+                        Screen::Login => unreachable!("Login screen is rendered in update()"),
                     });
                 });
         });
@@ -1022,10 +1027,7 @@ impl SlimJellyApp {
 
         let item_id = playback.item_id.clone();
         let status_text = playback.status_text.clone();
-        let player_name = match playback.player_kind {
-            super::PlayerKind::Mpv => "mpv",
-            super::PlayerKind::Vlc => "VLC",
-        };
+        let player_name = Self::describe_player_kind(playback.player_kind);
 
         egui::Frame::group(ui.style())
             .fill(Self::color_surface_alt())
@@ -1073,14 +1075,7 @@ impl SlimJellyApp {
         }
     }
 
-    fn show_faded_section<R>(
-        ui: &mut egui::Ui,
-        id: &'static str,
-        offset: f32,
-        alpha_max: f32,
-        body: impl FnOnce(&mut egui::Ui) -> R,
-    ) -> R {
-        let _ = (id, offset, alpha_max);
+    fn show_faded_section<R>(ui: &mut egui::Ui, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
         Self::section_frame(ui).show(ui, |ui| body(ui)).inner
     }
 
@@ -1900,13 +1895,8 @@ impl SlimJellyApp {
         ui.add_space(Self::space_s());
 
         let compact = Self::is_compact_layout(ui);
-        Self::show_faded_section(
-            ui,
-            "details_header_section",
-            if compact { 8.0 } else { 12.0 },
-            235.0,
-            |ui| {
-                egui::Frame::group(ui.style())
+        Self::show_faded_section(ui, |ui| {
+            egui::Frame::group(ui.style())
                     .fill(Self::color_surface())
                     .stroke(Stroke::new(1.0, Self::color_border()))
                     .corner_radius(Self::radius_l())
@@ -1946,15 +1936,14 @@ impl SlimJellyApp {
                             });
                         }
                     });
-            },
-        );
+        });
 
         ui.add_space(if compact {
             Self::space_s()
         } else {
             Self::space_m()
         });
-        Self::show_faded_section(ui, "details_synopsis_section", 5.0, 220.0, |ui| {
+        Self::show_faded_section(ui, |ui| {
             ui.label(RichText::new("Synopsis").strong().color(Self::color_info()));
             let synopsis = item
                 .overview
@@ -2296,13 +2285,7 @@ impl SlimJellyApp {
     }
 
     fn draw_detail_seasons_section(&mut self, ui: &mut egui::Ui, item: &BaseItemDto) {
-        let compact = Self::is_compact_layout(ui);
-        Self::show_faded_section(
-            ui,
-            "details_seasons_section",
-            if compact { 4.0 } else { 6.0 },
-            215.0,
-            |ui| {
+        Self::show_faded_section(ui, |ui| {
                 ui.label(
                     RichText::new("Seasons & Episodes")
                         .strong()
@@ -2453,12 +2436,11 @@ impl SlimJellyApp {
                             ui.add_space(Self::space_xs());
                         }
                     });
-            },
-        );
+            });
     }
 
     fn draw_detail_cast_section(&mut self, ui: &mut egui::Ui, item: &BaseItemDto) {
-        Self::show_faded_section(ui, "details_cast_section", 5.0, 215.0, |ui| {
+        Self::show_faded_section(ui, |ui| {
             ui.label(RichText::new("Cast & Crew").strong().color(Self::color_info()));
 
             let Some(people) = item.people.as_ref() else {
@@ -2512,7 +2494,7 @@ impl SlimJellyApp {
     }
 
     fn draw_detail_related_section(&mut self, ui: &mut egui::Ui) {
-        Self::show_faded_section(ui, "details_related_section", 5.0, 215.0, |ui| {
+        Self::show_faded_section(ui, |ui| {
             ui.label(RichText::new("More Like This").strong().color(Self::color_info()));
 
             if self.detail_related.is_empty() {
@@ -2908,13 +2890,7 @@ impl SlimJellyApp {
             return;
         }
 
-        let compact = Self::is_compact_layout(ui);
-        Self::show_faded_section(
-            ui,
-            "details_subtitle_section",
-            if compact { 4.0 } else { 6.0 },
-            225.0,
-            |ui| {
+        Self::show_faded_section(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("Subtitles").strong().color(Self::color_info()));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -3023,7 +2999,6 @@ impl SlimJellyApp {
                                 });
                         }
                     });
-            },
-        );
+            });
     }
 }

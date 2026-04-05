@@ -13,8 +13,8 @@ use crate::{
     jellyfin::{
         JellyfinClient,
         models::{
-            BaseItemDto, BaseItemDtoQueryResult, MediaSourceInfo, PublicSystemInfo, SearchHint,
-            TaskInfo, VirtualFolderInfo,
+            BaseItemDto, BaseItemDtoQueryResult, MediaSourceInfo, SearchHint, TaskInfo,
+            VirtualFolderInfo,
         },
     },
     secure_store::load_session,
@@ -74,10 +74,7 @@ enum UiMessage {
         server_id: Option<String>,
     },
     LoginFailed(String),
-    HealthResult {
-        ping: String,
-        info: PublicSystemInfo,
-    },
+    HealthResult,
     HealthFailed(String),
     ViewsLoaded(BaseItemDtoQueryResult),
     SearchHintsLoaded(Vec<SearchHint>),
@@ -223,9 +220,6 @@ pub struct SlimJellyApp {
     status_line: String,
     session: Option<SessionView>,
 
-    health_ping: Option<String>,
-    health_info: Option<PublicSystemInfo>,
-
     selected_view_id: Option<String>,
     views: Vec<BaseItemDto>,
     library_items: Vec<BaseItemDto>,
@@ -289,8 +283,6 @@ impl SlimJellyApp {
             login_password: String::new(),
             status_line: "Ready".to_string(),
             session: None,
-            health_ping: None,
-            health_info: None,
             selected_view_id: None,
             views: Vec::new(),
             library_items: Vec::new(),
@@ -349,20 +341,24 @@ impl SlimJellyApp {
                     self.current_screen = Screen::Home;
                     self.status_line = "Session restored".to_string();
                     self.validate_restored_session();
-                    self.refresh_health();
-                    self.load_views();
-                    self.load_home_sections();
-                    self.load_library_items(self.current_library_section);
-                    self.load_collections();
-                    self.load_playlists();
-                    self.load_last_played();
-                    self.search_items();
+                    self.load_post_auth_data();
                 }
                 Err(err) => {
                     self.status_line = format!("Failed to restore session: {err}");
                 }
             }
         }
+    }
+
+    fn load_post_auth_data(&mut self) {
+        self.refresh_health();
+        self.load_views();
+        self.load_home_sections();
+        self.load_library_items(self.current_library_section);
+        self.load_collections();
+        self.load_playlists();
+        self.load_last_played();
+        self.search_items();
     }
 
     fn validate_restored_session(&mut self) {

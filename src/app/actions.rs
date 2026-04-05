@@ -557,7 +557,8 @@ impl SlimJellyApp {
 
             match (ping, info) {
                 (Ok(ping), Ok(info)) => {
-                    Self::push_message(&messages, UiMessage::HealthResult { ping, info });
+                    let _ = (ping, info);
+                    Self::push_message(&messages, UiMessage::HealthResult);
                 }
                 (Err(err), _) | (_, Err(err)) => {
                     Self::push_message(&messages, UiMessage::HealthFailed(err.to_string()));
