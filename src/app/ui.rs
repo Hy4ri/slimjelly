@@ -200,21 +200,32 @@ impl SlimJellyApp {
             Color32::from_rgba_unmultiplied(36, 50, 65, 65),
         );
 
-        ui.painter().text(
-            rect.center() + egui::vec2(0.0, 8.0),
-            egui::Align2::CENTER_CENTER,
-            label,
-            egui::TextStyle::Small.resolve(ui.style()),
-            Self::color_text_muted(),
-        );
-
-        ui.painter().text(
-            rect.center() + egui::vec2(0.0, -10.0),
-            egui::Align2::CENTER_CENTER,
-            "Artwork unavailable",
-            egui::TextStyle::Small.resolve(ui.style()),
-            Self::color_text_muted(),
-        );
+        let is_small = rect.height() < 120.0;
+        if is_small {
+            // Single centered line for compact placeholders to avoid text overlap
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "No artwork",
+                egui::TextStyle::Small.resolve(ui.style()),
+                Self::color_text_muted(),
+            );
+        } else {
+            ui.painter().text(
+                rect.center() + egui::vec2(0.0, -10.0),
+                egui::Align2::CENTER_CENTER,
+                "Artwork unavailable",
+                egui::TextStyle::Small.resolve(ui.style()),
+                Self::color_text_muted(),
+            );
+            ui.painter().text(
+                rect.center() + egui::vec2(0.0, 8.0),
+                egui::Align2::CENTER_CENTER,
+                label,
+                egui::TextStyle::Small.resolve(ui.style()),
+                Self::color_text_muted(),
+            );
+        }
         response
     }
 
@@ -831,7 +842,9 @@ impl SlimJellyApp {
     fn top_nav_button(&mut self, ui: &mut egui::Ui, label: &str, screen: Screen) {
         let selected = self.current_screen == screen;
         let text = if selected {
-            RichText::new(label).color(Color32::from_rgb(236, 241, 247)).strong()
+            RichText::new(label)
+                .color(Color32::from_rgb(248, 252, 255))
+                .strong()
         } else {
             Self::muted_text(label)
         };
@@ -852,7 +865,22 @@ impl SlimJellyApp {
             ))
             .corner_radius(Self::radius_m())
             .min_size(egui::vec2(92.0, 32.0));
-        if ui.add(button).clicked() {
+        let response = ui.add(button);
+
+        // Draw accent underline for the active tab
+        if selected {
+            let rect = response.rect;
+            let underline_y = rect.max.y + 2.0;
+            ui.painter().line_segment(
+                [
+                    egui::pos2(rect.min.x + 6.0, underline_y),
+                    egui::pos2(rect.max.x - 6.0, underline_y),
+                ],
+                Stroke::new(2.0, Self::color_accent()),
+            );
+        }
+
+        if response.clicked() {
             self.navigate_to(screen);
         }
     }
@@ -980,33 +1008,35 @@ impl SlimJellyApp {
                     ui.label(
                         Self::muted_text("Clean cinematic desktop player for your media server"),
                     );
-                    ui.add_space(Self::space_m());
+                    ui.add_space(Self::space_l());
 
                     ui.label(RichText::new("Server URL").small().strong());
                     let url_resp = ui.text_edit_singleline(&mut self.config.server.base_url);
+                    ui.add_space(Self::space_s());
 
                     ui.label(RichText::new("Username").small().strong());
                     let user_resp = ui.text_edit_singleline(&mut self.config.server.username);
+                    ui.add_space(Self::space_s());
 
                     ui.label(RichText::new("Password").small().strong());
                     let pass_resp =
                         ui.add(egui::TextEdit::singleline(&mut self.login_password).password(true));
+                    ui.add_space(Self::space_s());
 
                     ui.checkbox(
                         &mut self.config.server.allow_self_signed,
                         "Allow self-signed certificates",
                     );
 
-                    ui.add_space(Self::space_m());
+                    ui.add_space(Self::space_l());
+                    ui.separator();
+                    ui.add_space(Self::space_s());
                     ui.horizontal(|ui| {
+                        if ui.add(Self::primary_button("Login")).clicked() {
+                            self.do_login();
+                        }
                         if ui.button("Save Settings").clicked() {
                             self.save_settings();
-                        }
-                        if ui
-                            .add(Self::primary_button("Login"))
-                            .clicked()
-                        {
-                            self.do_login();
                         }
                     });
 
@@ -1025,7 +1055,11 @@ impl SlimJellyApp {
             return;
         };
 
-        let item_id = playback.item_id.clone();
+        let item_name = self
+            .selected_item
+            .as_ref()
+            .and_then(|item| item.name.clone())
+            .unwrap_or_else(|| Self::truncate_text(&playback.item_id, 16));
         let status_text = playback.status_text.clone();
         let player_name = Self::describe_player_kind(playback.player_kind);
 
@@ -1036,13 +1070,13 @@ impl SlimJellyApp {
             .inner_margin(egui::Margin::symmetric(12, 9))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Now Playing").strong().color(Self::color_info()));
+                    ui.label(RichText::new("▶ Now Playing").strong().color(Self::color_info()));
                     ui.separator();
-                    ui.label(Self::muted_text(format!("Item {item_id}")));
-                    ui.label(Self::muted_text(format!("Player {player_name}")));
-                    ui.label(Self::muted_text(status_text));
+                    ui.label(RichText::new(item_name).strong());
+                    ui.label(Self::muted_text(format!("via {player_name}")));
+                    ui.label(Self::muted_text(format!("· {status_text}")));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.add(Self::primary_button("Stop Sync")).clicked() {
+                        if ui.add(Self::primary_button("Stop")).clicked() {
                             self.stop_playback();
                         }
                     });
@@ -1233,7 +1267,7 @@ impl SlimJellyApp {
                     );
                     ui.separator();
                     ui.spacing_mut().button_padding = egui::vec2(12.0, 6.0);
-                    if ui.button("<").clicked() {
+                    if ui.button("◀").clicked() {
                         if self.hero_index == 0 {
                             self.hero_index = hero_items.len().saturating_sub(1);
                         } else {
@@ -1243,15 +1277,14 @@ impl SlimJellyApp {
 
                     ui.label(
                         RichText::new(format!(
-                            "Featured {} / {}",
+                            "{} / {}",
                             self.hero_index + 1,
                             hero_items.len()
                         ))
-                        .color(Self::color_text_muted())
-                        .small(),
+                        .color(Self::color_text_muted()),
                     );
 
-                    if ui.button(">").clicked() {
+                    if ui.button("▶").clicked() {
                         self.hero_index = (self.hero_index + 1) % hero_items.len();
                     }
                 });
@@ -1445,21 +1478,23 @@ impl SlimJellyApp {
                     let title_text = Self::truncate_text(&title, if compact { 72 } else { 90 });
 
                     if watched {
-                        ui.label(RichText::new("Watched").small().color(Self::color_success()));
-                        if ui
-                            .add(
-                                egui::Label::new(
-                                    RichText::new(title_text)
-                                        .color(Self::color_success())
-                                        .strong(),
+                        ui.horizontal(|ui| {
+                            if ui
+                                .add(
+                                    egui::Label::new(
+                                        RichText::new(title_text)
+                                            .color(Self::color_success())
+                                            .strong(),
+                                    )
+                                    .sense(egui::Sense::click())
+                                    .wrap(),
                                 )
-                                .sense(egui::Sense::click())
-                                .wrap(),
-                            )
-                            .clicked()
-                        {
-                            clicked = true;
-                        }
+                                .clicked()
+                            {
+                                clicked = true;
+                            }
+                            ui.label(RichText::new("✓").small().color(Self::color_success()));
+                        });
                     } else if ui
                         .add(
                             egui::Label::new(RichText::new(title_text).strong())
@@ -1511,7 +1546,7 @@ impl SlimJellyApp {
         if hover_t > 0.0 {
             ui.painter().rect_stroke(
                 frame.response.rect.expand(1.5),
-                Self::radius_s(),
+                Self::radius_m(),
                 Stroke::new(2.0, Self::color_info()),
                 egui::StrokeKind::Outside,
             );
@@ -1676,7 +1711,13 @@ impl SlimJellyApp {
                     egui::ComboBox::from_id_salt("search_view_select")
                         .selected_text(
                             self.selected_view_id
-                                .clone()
+                                .as_ref()
+                                .and_then(|selected_id| {
+                                    self.views
+                                        .iter()
+                                        .find(|view| view.id.as_deref() == Some(selected_id.as_str()))
+                                        .and_then(|view| view.name.clone())
+                                })
                                 .unwrap_or_else(|| "All".to_string()),
                         )
                         .show_ui(ui, |ui| {
@@ -1713,19 +1754,21 @@ impl SlimJellyApp {
 
         if !self.search_hints.is_empty() {
             let hints = self.search_hints.clone();
-            ui.horizontal_wrapped(|ui| {
-                ui.label(Self::muted_text("Hints:"));
-                for hint in hints.iter().take(8) {
-                    let label = hint
-                        .name
-                        .clone()
-                        .or_else(|| hint.item_id.clone())
-                        .unwrap_or_else(|| "Unknown".to_string());
-                    if ui.button(label.clone()).clicked() {
-                        self.search_term = label;
-                        self.search_items();
+            Self::section_frame(ui).show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(Self::muted_text("Suggestions:"));
+                    for hint in hints.iter().take(8) {
+                        let label = hint
+                            .name
+                            .clone()
+                            .or_else(|| hint.item_id.clone())
+                            .unwrap_or_else(|| "Unknown".to_string());
+                        if ui.button(label.clone()).clicked() {
+                            self.search_term = label;
+                            self.search_items();
+                        }
                     }
-                }
+                });
             });
         }
 
@@ -1808,7 +1851,10 @@ impl SlimJellyApp {
 
         let playlists = self.playlists.clone();
         if playlists.is_empty() {
-            ui.label(Self::muted_text("No playlists found."));
+            ui.add_space(Self::space_s());
+            Self::section_frame(ui).show(ui, |ui| {
+                ui.label(Self::muted_text("No playlists found."));
+            });
             return;
         }
 
@@ -1868,7 +1914,7 @@ impl SlimJellyApp {
             });
 
         ui.add_space(Self::space_l());
-        ui.label(RichText::new("Playlist Items").strong());
+        ui.label(RichText::new("Playlist Items").strong().color(Self::color_info()));
         let items = self.playlist_items.clone();
         self.draw_media_grid(ui, "playlist_items_grid", &items, Screen::Playlists);
     }
@@ -1884,7 +1930,7 @@ impl SlimJellyApp {
 
         Self::section_frame(ui).show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    if ui.button("Back").clicked() {
+                    if ui.button("← Back").clicked() {
                         self.current_screen = self.detail_return_screen;
                     }
 
@@ -1896,46 +1942,29 @@ impl SlimJellyApp {
 
         let compact = Self::is_compact_layout(ui);
         Self::show_faded_section(ui, |ui| {
-            egui::Frame::group(ui.style())
-                    .fill(Self::color_surface())
-                    .stroke(Stroke::new(1.0, Self::color_border()))
-                    .corner_radius(Self::radius_l())
-                    .inner_margin(egui::Margin::symmetric(12, if compact { 8 } else { 10 }))
-                    .show(ui, |ui| {
                         if compact {
-                            if self
-                                .draw_item_image_with_size(
+                            self.draw_item_image_with_size(
                                     ui,
                                     &item,
                                     Vec2::new(220.0, 308.0),
                                     "Primary",
-                                )
-                                .clicked()
-                            {
-                                self.selected_item = Some(item.clone());
-                            }
+                                );
                             ui.add_space(Self::space_m());
                             self.draw_details_header_text(ui, &item, true);
                         } else {
                             ui.horizontal(|ui| {
-                                if self
-                                    .draw_item_image_with_size(
+                                self.draw_item_image_with_size(
                                         ui,
                                         &item,
                                         Vec2::new(240.0, 340.0),
                                         "Primary",
-                                    )
-                                    .clicked()
-                                {
-                                    self.selected_item = Some(item.clone());
-                                }
+                                    );
 
                                 ui.vertical(|ui| {
                                     self.draw_details_header_text(ui, &item, false);
                                 });
                             });
                         }
-                    });
         });
 
         ui.add_space(if compact {
@@ -1949,7 +1978,7 @@ impl SlimJellyApp {
                 .overview
                 .clone()
                 .filter(|s| !s.trim().is_empty())
-                .unwrap_or_else(|| "--".to_string());
+                .unwrap_or_else(|| "No synopsis available.".to_string());
             ui.label(synopsis);
         });
 
@@ -2353,7 +2382,7 @@ impl SlimJellyApp {
                 let episodes = Self::sorted_episode_items(&self.detail_episodes);
                 egui::ScrollArea::vertical()
                     .id_salt("detail_episodes_list")
-                    .max_height(280.0)
+                    .max_height(380.0)
                     .show(ui, |ui| {
                         for episode in &episodes {
                             let watched = Self::is_item_watched(episode);
@@ -2420,16 +2449,10 @@ impl SlimJellyApp {
                                                 .as_deref()
                                                 .map(str::trim)
                                                 .filter(|value| !value.is_empty())
-                                                .map(|value| {
-                                                    let mut text =
-                                                        value.chars().take(170).collect::<String>();
-                                                    if value.chars().count() > 170 {
-                                                        text.push_str("...");
-                                                    }
-                                                    text
-                                                })
-                                                .unwrap_or_else(|| "--".to_string());
-                                            ui.label(Self::muted_text(overview).small());
+                                                .map(|value| Self::truncate_text(value, 170));
+                                            if let Some(overview) = overview {
+                                                ui.label(Self::muted_text(overview).small());
+                                            }
                                         });
                                     });
                                 });
@@ -2601,48 +2624,51 @@ impl SlimJellyApp {
                 });
             });
 
-        ui.separator();
+        ui.add_space(Self::space_m());
         Self::section_frame(ui).show(ui, |ui| {
-                ui.label(RichText::new("Scheduled Tasks").strong());
-                egui::ScrollArea::vertical()
-                    .max_height(280.0)
-                    .show(ui, |ui| {
-                        for task in &self.tasks {
-                            let name = task
-                                .name
-                                .clone()
-                                .unwrap_or_else(|| "Unnamed task".to_string());
-                            let state = task.state.clone().unwrap_or_else(|| "unknown".to_string());
-                            let progress = task
-                                .current_progress_percentage
-                                .map(|v| format!("{v:.0}%"))
-                                .unwrap_or_else(|| "n/a".to_string());
-                            ui.label(Self::muted_text(format!("{name} | {state} | {progress}")));
-                        }
-                    });
+                ui.label(RichText::new("Scheduled Tasks").strong().color(Self::color_info()));
+                if self.tasks.is_empty() {
+                    ui.label(Self::muted_text("No scheduled tasks loaded."));
+                } else {
+                    egui::ScrollArea::vertical()
+                        .max_height(280.0)
+                        .show(ui, |ui| {
+                            for task in &self.tasks {
+                                let name = task
+                                    .name
+                                    .clone()
+                                    .unwrap_or_else(|| "Unnamed task".to_string());
+                                let state = task.state.clone().unwrap_or_else(|| "unknown".to_string());
+                                let progress = task
+                                    .current_progress_percentage
+                                    .map(|v| format!("{v:.0}%"))
+                                    .unwrap_or_else(|| "n/a".to_string());
+                                ui.label(Self::muted_text(format!("{name} | {state} | {progress}")));
+                            }
+                        });
+                }
             });
 
         ui.add_space(Self::space_m());
-        ui.separator();
-        ui.label(
-            RichText::new("Danger Zone")
-                .strong()
-                .color(Color32::from_rgb(210, 78, 95)),
-        );
-        ui.label(
-            Self::muted_text(
-                "Deletes are permanent and can remove files from disk depending on server configuration.",
-            )
-            .small(),
-        );
-
-        ui.add_space(Self::space_s());
         egui::Frame::group(ui.style())
             .fill(Color32::from_rgb(40, 24, 30))
             .stroke(Stroke::new(1.0, Color32::from_rgb(95, 36, 47)))
             .corner_radius(Self::radius_m())
             .inner_margin(egui::Margin::symmetric(12, 10))
             .show(ui, |ui| {
+                ui.label(
+                    RichText::new("Danger Zone")
+                        .strong()
+                        .color(Color32::from_rgb(210, 78, 95)),
+                );
+                ui.label(
+                    Self::muted_text(
+                        "Deletes are permanent and can remove files from disk depending on server configuration.",
+                    )
+                    .small(),
+                );
+
+                ui.add_space(Self::space_m());
                 ui.label(RichText::new("Delete Item by ID").strong());
                 ui.label(Self::muted_text("Type DELETE to enable item deletion.").small());
 
@@ -2659,15 +2685,8 @@ impl SlimJellyApp {
                 {
                     self.delete_admin_item_by_id(self.selected_library_id.trim().to_string());
                 }
-            });
 
-        ui.add_space(Self::space_s());
-        egui::Frame::group(ui.style())
-            .fill(Color32::from_rgb(40, 24, 30))
-            .stroke(Stroke::new(1.0, Color32::from_rgb(95, 36, 47)))
-            .corner_radius(Self::radius_m())
-            .inner_margin(egui::Margin::symmetric(12, 10))
-            .show(ui, |ui| {
+                ui.add_space(Self::space_m());
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("Delete Library").strong());
                     if ui.button("Refresh Libraries").clicked() {
@@ -2761,7 +2780,7 @@ impl SlimJellyApp {
             });
 
             ui.horizontal_wrapped(|ui| {
-                    ui.label("mpv path (optional)");
+                    ui.label("mpv Path (optional)");
                     let mut value = self.config.player.mpv_path.clone().unwrap_or_default();
                     let response =
                         ui.add(egui::TextEdit::singleline(&mut value).desired_width(320.0));
@@ -2780,7 +2799,7 @@ impl SlimJellyApp {
             });
 
             ui.horizontal_wrapped(|ui| {
-                    ui.label("VLC path (optional)");
+                    ui.label("VLC Path (optional)");
                     let mut value = self.config.player.vlc_path.clone().unwrap_or_default();
                     let response =
                         ui.add(egui::TextEdit::singleline(&mut value).desired_width(320.0));
@@ -2815,18 +2834,19 @@ impl SlimJellyApp {
                     ui.checkbox(
                         &mut self.config.server.allow_self_signed,
                         "Allow self-signed certs",
-                    );
-                    ui.checkbox(&mut self.config.playback.direct_first, "Direct play first");
+                    ).on_hover_text("Accept TLS certificates not signed by a trusted CA");
+                    ui.checkbox(&mut self.config.playback.direct_first, "Direct play first")
+                        .on_hover_text("Prefer direct stream over transcoding when available");
                     ui.checkbox(
                         &mut self.config.playback.fallback_once,
                         "Transcode fallback once",
-                    );
+                    ).on_hover_text("Auto-retry with transcoding if direct play exits quickly");
             });
         });
 
         ui.add_space(12.0);
         Self::section_frame(ui).show(ui, |ui| {
-            ui.label(RichText::new("OpenSubtitles").strong().size(16.0).color(Self::color_info()));
+            ui.label(RichText::new("OpenSubtitles").strong().color(Self::color_info()));
             ui.label(Self::muted_text("Configure subtitle search and download.").small());
 
             ui.horizontal_wrapped(|ui| {
