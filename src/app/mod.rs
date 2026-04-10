@@ -18,6 +18,7 @@ use crate::{
         },
     },
     secure_store::load_session,
+    seerr::models::{SeerrRequest, SeerrSearchResult},
     subtitles::models::SubtitleResult,
 };
 
@@ -46,6 +47,7 @@ enum Screen {
     Libraries,
     Collections,
     Playlists,
+    Requests,
     Admin,
     Settings,
     Details,
@@ -57,6 +59,12 @@ enum LibrarySection {
     TvShows,
     Music,
     Audiobooks,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SeerrTab {
+    Search,
+    MyRequests,
 }
 
 #[derive(Debug, Clone)]
@@ -179,6 +187,12 @@ enum UiMessage {
         path: String,
     },
     SubtitleDownloadFailed(String),
+    SeerrSearchLoaded(Vec<SeerrSearchResult>),
+    SeerrSearchFailed(String),
+    SeerrRequestsLoaded(Vec<SeerrRequest>),
+    SeerrRequestsFailed(String),
+    SeerrRequestCreated(String),
+    SeerrRequestFailed(String),
 }
 
 #[derive(Debug, Clone)]
@@ -263,6 +277,13 @@ pub struct SlimJellyApp {
     subtitle_panel_open: bool,
     subtitle_os_token: Option<String>,
     subtitle_temp_path: Option<String>,
+
+    seerr_search_term: String,
+    seerr_search_results: Vec<SeerrSearchResult>,
+    seerr_search_loading: bool,
+    seerr_requests: Vec<SeerrRequest>,
+    seerr_requests_loading: bool,
+    seerr_tab: SeerrTab,
 }
 
 impl SlimJellyApp {
@@ -322,6 +343,12 @@ impl SlimJellyApp {
             subtitle_panel_open: false,
             subtitle_os_token: None,
             subtitle_temp_path: None,
+            seerr_search_term: String::new(),
+            seerr_search_results: Vec::new(),
+            seerr_search_loading: false,
+            seerr_requests: Vec::new(),
+            seerr_requests_loading: false,
+            seerr_tab: SeerrTab::Search,
         };
 
         app.try_restore_session();

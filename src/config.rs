@@ -25,6 +25,7 @@ pub struct AppConfig {
     pub player: PlayerConfig,
     pub playback: PlaybackConfig,
     pub subtitles: SubtitleConfig,
+    pub seerr: SeerrConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,6 +93,13 @@ pub enum SyncMode {
     Fixed,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SeerrConfig {
+    pub base_url: String,
+    pub api_key: String,
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -100,6 +108,7 @@ impl Default for AppConfig {
             player: PlayerConfig::default(),
             playback: PlaybackConfig::default(),
             subtitles: SubtitleConfig::default(),
+            seerr: SeerrConfig::default(),
         }
     }
 }
@@ -153,6 +162,15 @@ impl Default for SubtitleConfig {
             username: String::new(),
             password: String::new(),
             default_language: "en".to_string(),
+        }
+    }
+}
+
+impl Default for SeerrConfig {
+    fn default() -> Self {
+        Self {
+            base_url: String::new(),
+            api_key: String::new(),
         }
     }
 }

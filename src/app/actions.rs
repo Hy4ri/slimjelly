@@ -804,7 +804,7 @@ impl SlimJellyApp {
             Screen::Details => {
                 pick_from(&self.detail_related).or_else(|| pick_from(&self.detail_episodes))
             }
-            Screen::Admin | Screen::Settings | Screen::Login => None,
+            Screen::Admin | Screen::Settings | Screen::Login | Screen::Requests => None,
         }
     }
 
@@ -1751,5 +1751,134 @@ impl SlimJellyApp {
         }
         self.subtitle_search_results.clear();
         self.subtitle_panel_open = false;
+    }
+
+    // -----------------------------------------------------------------------
+    // Jellyseerr / Overseerr
+    // -----------------------------------------------------------------------
+
+    fn build_seerr_client(&self) -> Result<crate::seerr::SeerrClient, crate::error::AppError> {
+        crate::seerr::SeerrClient::new(
+            &self.config.seerr.base_url,
+            &self.config.seerr.api_key,
+        )
+    }
+
+    pub(super) fn seerr_search(&mut self) {
+        let term = self.seerr_search_term.trim().to_string();
+        if term.is_empty() {
+            self.status_line = "Enter a search term".to_string();
+            return;
+        }
+
+        let client = match self.build_seerr_client() {
+            Ok(c) => c,
+            Err(err) => {
+                self.status_line = format!("Seerr config error: {err}");
+                return;
+            }
+        };
+
+        self.seerr_search_loading = true;
+        self.status_line = "Searching Jellyseerr...".to_string();
+        let messages = self.messages.clone();
+
+        self.runtime.spawn(async move {
+            match client.search(&term, 1).await {
+                Ok(response) => {
+                    Self::push_message(&messages, UiMessage::SeerrSearchLoaded(response.results));
+                }
+                Err(err) => {
+                    Self::push_message(&messages, UiMessage::SeerrSearchFailed(err.to_string()));
+                }
+            }
+        });
+    }
+
+    pub(super) fn seerr_load_requests(&mut self) {
+        let client = match self.build_seerr_client() {
+            Ok(c) => c,
+            Err(err) => {
+                self.status_line = format!("Seerr config error: {err}");
+                return;
+            }
+        };
+
+        self.seerr_requests_loading = true;
+        self.status_line = "Loading requests...".to_string();
+        let messages = self.messages.clone();
+
+        self.runtime.spawn(async move {
+            match client.get_requests(1, 50).await {
+                Ok(response) => {
+                    Self::push_message(
+                        &messages,
+                        UiMessage::SeerrRequestsLoaded(response.results),
+                    );
+                }
+                Err(err) => {
+                    Self::push_message(&messages, UiMessage::SeerrRequestsFailed(err.to_string()));
+                }
+            }
+        });
+    }
+
+    pub(super) fn seerr_request_movie(&mut self, tmdb_id: i64, title: String) {
+        let client = match self.build_seerr_client() {
+            Ok(c) => c,
+            Err(err) => {
+                self.status_line = format!("Seerr config error: {err}");
+                return;
+            }
+        };
+
+        self.status_line = format!("Requesting \"{title}\"...");
+        let messages = self.messages.clone();
+
+        self.runtime.spawn(async move {
+            match client.request_movie(tmdb_id).await {
+                Ok(_) => {
+                    Self::push_message(
+                        &messages,
+                        UiMessage::SeerrRequestCreated(format!("Requested: {title}")),
+                    );
+                }
+                Err(err) => {
+                    Self::push_message(&messages, UiMessage::SeerrRequestFailed(err.to_string()));
+                }
+            }
+        });
+    }
+
+    pub(super) fn seerr_request_tv(
+        &mut self,
+        tmdb_id: i64,
+        title: String,
+        seasons: Option<Vec<i32>>,
+    ) {
+        let client = match self.build_seerr_client() {
+            Ok(c) => c,
+            Err(err) => {
+                self.status_line = format!("Seerr config error: {err}");
+                return;
+            }
+        };
+
+        self.status_line = format!("Requesting \"{title}\"...");
+        let messages = self.messages.clone();
+
+        self.runtime.spawn(async move {
+            match client.request_tv(tmdb_id, seasons).await {
+                Ok(_) => {
+                    Self::push_message(
+                        &messages,
+                        UiMessage::SeerrRequestCreated(format!("Requested: {title}")),
+                    );
+                }
+                Err(err) => {
+                    Self::push_message(&messages, UiMessage::SeerrRequestFailed(err.to_string()));
+                }
+            }
+        });
     }
 }

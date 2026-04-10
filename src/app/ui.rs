@@ -2,9 +2,9 @@ use std::{collections::HashSet, sync::atomic::Ordering};
 
 use eframe::egui::{self, Color32, RichText, Stroke, Vec2};
 
-use crate::{config::PreferredPlayer, jellyfin::models::BaseItemDto};
+use crate::{config::PreferredPlayer, jellyfin::models::BaseItemDto, seerr::models::MediaStatus};
 
-use super::{LibrarySection, Screen, SessionView, SlimJellyApp, UiMessage};
+use super::{LibrarySection, Screen, SeerrTab, SessionView, SlimJellyApp, UiMessage};
 
 impl SlimJellyApp {
     fn refresh_media_views_after_item_state_change(
@@ -806,6 +806,38 @@ impl SlimJellyApp {
                 UiMessage::SubtitleDownloadFailed(message) => {
                     self.status_line = format!("Subtitle download failed: {message}");
                 }
+                UiMessage::SeerrSearchLoaded(results) => {
+                    self.seerr_search_loading = false;
+                    self.status_line = format!(
+                        "Found {}",
+                        Self::count_text(results.len(), "result", "results")
+                    );
+                    self.seerr_search_results = results;
+                }
+                UiMessage::SeerrSearchFailed(message) => {
+                    self.seerr_search_loading = false;
+                    self.status_line = format!("Seerr search failed: {message}");
+                }
+                UiMessage::SeerrRequestsLoaded(requests) => {
+                    self.seerr_requests_loading = false;
+                    self.status_line = format!(
+                        "Loaded {}",
+                        Self::count_text(requests.len(), "request", "requests")
+                    );
+                    self.seerr_requests = requests;
+                }
+                UiMessage::SeerrRequestsFailed(message) => {
+                    self.seerr_requests_loading = false;
+                    self.status_line = format!("Failed to load requests: {message}");
+                }
+                UiMessage::SeerrRequestCreated(message) => {
+                    self.status_line = message;
+                    // Refresh search results to update status badges
+                    self.seerr_search();
+                }
+                UiMessage::SeerrRequestFailed(message) => {
+                    self.status_line = format!("Request failed: {message}");
+                }
             }
         }
     }
@@ -830,6 +862,7 @@ impl SlimJellyApp {
                         Screen::Libraries => self.draw_libraries(ui),
                         Screen::Collections => self.draw_collections(ui),
                         Screen::Playlists => self.draw_playlists_screen(ui),
+                        Screen::Requests => self.draw_requests(ui),
                         Screen::Admin => self.draw_admin(ui),
                         Screen::Settings => self.draw_settings(ui),
                         Screen::Details => self.draw_details(ui),
@@ -913,6 +946,9 @@ impl SlimJellyApp {
                         self.top_nav_button(ui, "Libraries", Screen::Libraries);
                         self.top_nav_button(ui, "Collections", Screen::Collections);
                         self.top_nav_button(ui, "Playlists", Screen::Playlists);
+                        if !self.config.seerr.base_url.trim().is_empty() {
+                            self.top_nav_button(ui, "Requests", Screen::Requests);
+                        }
                         self.top_nav_button(ui, "Settings", Screen::Settings);
                         if self.session.as_ref().map(|s| s.is_admin).unwrap_or(false) {
                             self.top_nav_button(ui, "Admin", Screen::Admin);
@@ -942,6 +978,9 @@ impl SlimJellyApp {
                     self.top_nav_button(ui, "Libraries", Screen::Libraries);
                     self.top_nav_button(ui, "Collections", Screen::Collections);
                     self.top_nav_button(ui, "Playlists", Screen::Playlists);
+                    if !self.config.seerr.base_url.trim().is_empty() {
+                        self.top_nav_button(ui, "Requests", Screen::Requests);
+                    }
                     self.top_nav_button(ui, "Settings", Screen::Settings);
                     if self.session.as_ref().map(|s| s.is_admin).unwrap_or(false) {
                         self.top_nav_button(ui, "Admin", Screen::Admin);
@@ -988,6 +1027,11 @@ impl SlimJellyApp {
             Screen::Playlists => {
                 if self.playlists.is_empty() {
                     self.load_playlists();
+                }
+            }
+            Screen::Requests => {
+                if self.seerr_requests.is_empty() {
+                    self.seerr_load_requests();
                 }
             }
             Screen::Admin => {
@@ -2899,10 +2943,459 @@ impl SlimJellyApp {
             });
         });
 
+        ui.add_space(12.0);
+        Self::section_frame(ui).show(ui, |ui| {
+            ui.label(RichText::new("Jellyseerr").strong().color(Self::color_info()));
+            ui.label(Self::muted_text("Connect to Jellyseerr or Overseerr for media requests.").small());
+
+            ui.horizontal_wrapped(|ui| {
+                    ui.label("Server URL");
+                    let resp = ui.add(
+                        egui::TextEdit::singleline(&mut self.config.seerr.base_url)
+                            .desired_width(300.0)
+                            .hint_text("http://localhost:5055"),
+                    );
+                    if resp.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        self.save_settings();
+                    }
+            });
+
+            ui.horizontal_wrapped(|ui| {
+                    ui.label("API Key");
+                    let resp = ui.add(
+                        egui::TextEdit::singleline(&mut self.config.seerr.api_key)
+                            .password(true)
+                            .desired_width(300.0),
+                    );
+                    if resp.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        self.save_settings();
+                    }
+            });
+        });
+
         ui.add_space(Self::space_m());
         if ui.add(Self::primary_button("Save Settings")).clicked() {
             self.save_settings();
         }
+    }
+
+    fn draw_requests(&mut self, ui: &mut egui::Ui) {
+        self.draw_screen_header(
+            ui,
+            "Requests",
+            "Search and request media via Jellyseerr.",
+        );
+
+        // Tab bar
+        ui.horizontal(|ui| {
+            let search_active = self.seerr_tab == SeerrTab::Search;
+            let requests_active = self.seerr_tab == SeerrTab::MyRequests;
+
+            if ui
+                .selectable_label(search_active, RichText::new("Search").strong())
+                .clicked()
+            {
+                self.seerr_tab = SeerrTab::Search;
+            }
+            if ui
+                .selectable_label(requests_active, RichText::new("My Requests").strong())
+                .clicked()
+            {
+                self.seerr_tab = SeerrTab::MyRequests;
+                if self.seerr_requests.is_empty() {
+                    self.seerr_load_requests();
+                }
+            }
+        });
+
+        ui.add_space(Self::space_s());
+
+        match self.seerr_tab {
+            SeerrTab::Search => self.draw_seerr_search(ui),
+            SeerrTab::MyRequests => self.draw_seerr_my_requests(ui),
+        }
+    }
+
+    fn draw_seerr_search(&mut self, ui: &mut egui::Ui) {
+        Self::section_frame(ui).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let search_resp = ui.add(
+                    egui::TextEdit::singleline(&mut self.seerr_search_term)
+                        .desired_width(360.0)
+                        .hint_text("Search movies & TV shows..."),
+                );
+                let enter_pressed =
+                    search_resp.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                if ui.add(Self::primary_button("Search")).clicked() || enter_pressed {
+                    self.seerr_search();
+                }
+                if self.seerr_search_loading {
+                    ui.spinner();
+                }
+            });
+        });
+
+        if self.seerr_search_results.is_empty() && !self.seerr_search_loading {
+            ui.add_space(Self::space_m());
+            Self::section_frame(ui).show(ui, |ui| {
+                ui.label(Self::muted_text(
+                    "Search for movies or TV shows to request them.",
+                ));
+            });
+            return;
+        }
+
+        let results = self.seerr_search_results.clone();
+
+        // Collect request actions to apply after iteration
+        let mut request_movie: Option<(i64, String)> = None;
+        let mut request_tv: Option<(i64, String)> = None;
+
+        ui.add_space(Self::space_s());
+        egui::ScrollArea::vertical()
+            .id_salt("seerr_search_results")
+            .max_height(520.0)
+            .show(ui, |ui| {
+                for result in &results {
+                    let title = result.display_title();
+                    let year = result.year().unwrap_or_default();
+                    let media_type = result
+                        .media_type
+                        .as_deref()
+                        .unwrap_or("unknown");
+                    let overview = result
+                        .overview
+                        .as_deref()
+                        .unwrap_or("")
+                        .trim();
+
+                    let media_status = result
+                        .media_info
+                        .as_ref()
+                        .and_then(|info| info.status)
+                        .map(MediaStatus::from_code)
+                        .unwrap_or(MediaStatus::Unknown);
+
+                    let tmdb_id = result.id.unwrap_or(0);
+
+                    Self::section_frame(ui).show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            // Poster placeholder
+                            if let Some(poster_path) = &result.poster_path {
+                                let poster_url = format!(
+                                    "https://image.tmdb.org/t/p/w92{poster_path}"
+                                );
+                                let key = format!("seerr_poster_{tmdb_id}_{media_type}");
+                                self.draw_remote_thumbnail(ui, &key, &poster_url, 60.0, 90.0);
+                            } else {
+                                Self::draw_image_placeholder(ui, Vec2::new(60.0, 90.0), "No artwork");
+                            }
+
+                            ui.add_space(Self::space_s());
+
+                            ui.vertical(|ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new(&title)
+                                            .strong()
+                                            .size(15.0)
+                                            .color(Color32::from_rgb(240, 245, 250)),
+                                    );
+                                    if !year.is_empty() {
+                                        ui.label(Self::muted_text(format!("({year})")));
+                                    }
+
+                                    // Type badge
+                                    let type_label = match media_type {
+                                        "movie" => "Movie",
+                                        "tv" => "TV",
+                                        other => other,
+                                    };
+                                    ui.label(
+                                        RichText::new(type_label)
+                                            .small()
+                                            .color(Self::color_info()),
+                                    );
+
+                                    // Status badge
+                                    let status_color = match media_status {
+                                        MediaStatus::Available => Self::color_success(),
+                                        MediaStatus::Processing
+                                        | MediaStatus::PartiallyAvailable => {
+                                            Color32::from_rgb(240, 180, 60)
+                                        }
+                                        MediaStatus::Pending => Color32::from_rgb(100, 160, 240),
+                                        MediaStatus::Unknown => Self::color_text_muted(),
+                                    };
+                                    ui.label(
+                                        RichText::new(media_status.label())
+                                            .small()
+                                            .color(status_color),
+                                    );
+                                });
+
+                                if !overview.is_empty() {
+                                    ui.label(
+                                        Self::muted_text(Self::truncate_text(overview, 180))
+                                            .small(),
+                                    );
+                                }
+
+                                ui.add_space(Self::space_xs());
+
+                                // Action button
+                                if media_status == MediaStatus::Unknown && tmdb_id > 0 {
+                                    if media_type == "movie" {
+                                        if ui
+                                            .add(Self::primary_button("Request"))
+                                            .clicked()
+                                        {
+                                            request_movie =
+                                                Some((tmdb_id, title.clone()));
+                                        }
+                                    } else if media_type == "tv"
+                                        && ui
+                                            .add(Self::primary_button("Request All Seasons"))
+                                            .clicked()
+                                    {
+                                        request_tv =
+                                            Some((tmdb_id, title.clone()));
+                                    }
+                                } else if media_status != MediaStatus::Unknown {
+                                    ui.label(
+                                        RichText::new(format!("✓ {}", media_status.label()))
+                                            .small()
+                                            .color(Self::color_success()),
+                                    );
+                                }
+                            });
+                        });
+                    });
+                    ui.add_space(Self::space_xs());
+                }
+            });
+
+        // Apply deferred actions
+        if let Some((id, title)) = request_movie {
+            self.seerr_request_movie(id, title);
+        }
+        if let Some((id, title)) = request_tv {
+            self.seerr_request_tv(id, title, None);
+        }
+    }
+
+    fn draw_seerr_my_requests(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            if ui.add(Self::primary_button("Refresh")).clicked() {
+                self.seerr_load_requests();
+            }
+            if self.seerr_requests_loading {
+                ui.spinner();
+            }
+        });
+
+        if self.seerr_requests.is_empty() && !self.seerr_requests_loading {
+            ui.add_space(Self::space_s());
+            Self::section_frame(ui).show(ui, |ui| {
+                ui.label(Self::muted_text("No requests found."));
+            });
+            return;
+        }
+
+        let requests = self.seerr_requests.clone();
+        ui.add_space(Self::space_s());
+        egui::ScrollArea::vertical()
+            .id_salt("seerr_requests_list")
+            .max_height(520.0)
+            .show(ui, |ui| {
+                for req in &requests {
+                    use crate::seerr::models::RequestStatus;
+
+                    let status = req
+                        .status
+                        .map(RequestStatus::from_code)
+                        .unwrap_or(RequestStatus::Unknown);
+                    let media_type = req
+                        .media_type
+                        .as_deref()
+                        .or_else(|| {
+                            req.media
+                                .as_ref()
+                                .and_then(|m| m.media_type.as_deref())
+                        })
+                        .unwrap_or("unknown");
+                    let tmdb_id = req
+                        .media
+                        .as_ref()
+                        .and_then(|m| m.tmdb_id)
+                        .map(|id| id.to_string())
+                        .unwrap_or_else(|| "–".to_string());
+                    let requested_by = req
+                        .requested_by
+                        .as_ref()
+                        .and_then(|u| u.display_name.clone())
+                        .unwrap_or_else(|| "Unknown".to_string());
+                    let created = req
+                        .created_at
+                        .as_deref()
+                        .and_then(|d| d.get(..10))
+                        .unwrap_or("–");
+
+                    let media_status = req
+                        .media
+                        .as_ref()
+                        .and_then(|m| m.status)
+                        .map(MediaStatus::from_code)
+                        .unwrap_or(MediaStatus::Unknown);
+
+                    Self::section_frame(ui).show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            // Type badge
+                            let type_label = match media_type {
+                                "movie" => "🎬",
+                                "tv" => "📺",
+                                _ => "❓",
+                            };
+                            ui.label(RichText::new(type_label).size(18.0));
+
+                            ui.vertical(|ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new(format!("TMDB {tmdb_id}"))
+                                            .strong()
+                                            .color(Color32::from_rgb(220, 225, 235)),
+                                    );
+
+                                    // Request approval status
+                                    let status_color = match status {
+                                        RequestStatus::Approved => Self::color_success(),
+                                        RequestStatus::Pending => {
+                                            Color32::from_rgb(100, 160, 240)
+                                        }
+                                        RequestStatus::Declined => {
+                                            Color32::from_rgb(210, 78, 95)
+                                        }
+                                        RequestStatus::Unknown => Self::color_text_muted(),
+                                    };
+                                    ui.label(
+                                        RichText::new(status.label())
+                                            .small()
+                                            .color(status_color),
+                                    );
+
+                                    // Media availability
+                                    if media_status != MediaStatus::Unknown {
+                                        let avail_color = match media_status {
+                                            MediaStatus::Available => Self::color_success(),
+                                            MediaStatus::Processing
+                                            | MediaStatus::PartiallyAvailable => {
+                                                Color32::from_rgb(240, 180, 60)
+                                            }
+                                            _ => Self::color_text_muted(),
+                                        };
+                                        ui.label(
+                                            RichText::new(format!("· {}", media_status.label()))
+                                                .small()
+                                                .color(avail_color),
+                                        );
+                                    }
+                                });
+
+                                ui.label(
+                                    Self::muted_text(format!(
+                                        "Requested by {requested_by} on {created}"
+                                    ))
+                                    .small(),
+                                );
+                            });
+                        });
+                    });
+                    ui.add_space(Self::space_xs());
+                }
+            });
+    }
+
+    /// Fetch and cache a remote image by URL (used for TMDB posters).
+    fn draw_remote_thumbnail(
+        &mut self,
+        ui: &mut egui::Ui,
+        key: &str,
+        url: &str,
+        width: f32,
+        height: f32,
+    ) {
+        if let Some(texture) = self.thumbnail_textures.get(key) {
+            let size = Vec2::new(width, height);
+            ui.image(egui::load::SizedTexture::new(texture.id(), size));
+            return;
+        }
+
+        if let Some(image) = self.thumbnail_images.get(key).cloned() {
+            let texture =
+                ui.ctx()
+                    .load_texture(key, image, egui::TextureOptions::LINEAR);
+            self.thumbnail_textures.insert(key.to_string(), texture);
+            return;
+        }
+
+        if self.thumbnail_failed.contains(key) {
+            Self::draw_image_placeholder(ui, Vec2::new(width, height), "No artwork");
+            return;
+        }
+
+        if !self.thumbnail_pending.contains(key) {
+            self.thumbnail_pending.insert(key.to_string());
+            let messages = self.messages.clone();
+            let key_owned = key.to_string();
+            let url_owned = url.to_string();
+            self.runtime.spawn(async move {
+                let client = reqwest::Client::new();
+                match client.get(&url_owned).send().await {
+                    Ok(response) if response.status().is_success() => {
+                        match response.bytes().await {
+                            Ok(bytes) => {
+                                Self::push_message(
+                                    &messages,
+                                    UiMessage::ThumbnailLoaded {
+                                        key: key_owned,
+                                        bytes: bytes.to_vec(),
+                                    },
+                                );
+                            }
+                            Err(_) => {
+                                Self::push_message(
+                                    &messages,
+                                    UiMessage::ThumbnailFailed {
+                                        key: key_owned,
+                                        reason: "Failed to read bytes".to_string(),
+                                    },
+                                );
+                            }
+                        }
+                    }
+                    Ok(response) => {
+                        Self::push_message(
+                            &messages,
+                            UiMessage::ThumbnailFailed {
+                                key: key_owned,
+                                reason: format!("HTTP {}", response.status()),
+                            },
+                        );
+                    }
+                    Err(err) => {
+                        Self::push_message(
+                            &messages,
+                            UiMessage::ThumbnailFailed {
+                                key: key_owned,
+                                reason: err.to_string(),
+                            },
+                        );
+                    }
+                }
+            });
+        }
+
+        Self::draw_image_placeholder(ui, Vec2::new(width, height), "No artwork");
     }
 
     fn draw_subtitle_panel(&mut self, ui: &mut egui::Ui) {

@@ -3,6 +3,7 @@ mod config;
 mod error;
 mod jellyfin;
 mod secure_store;
+mod seerr;
 mod subtitles;
 
 use std::sync::Arc;
