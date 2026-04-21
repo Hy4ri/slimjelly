@@ -22,9 +22,12 @@ Follow it unless a user request explicitly overrides it.
 - `src/config.rs`: config schema/defaults, load/save logic, tests
 - `src/secure_store.rs`: encrypted session token storage, tests
 - `src/jellyfin/client.rs`: Jellyfin HTTP wrapper and request helpers, tests
-- `src/jellyfin/models.rs`: Jellyfin DTOs
+- `src/jellyfin/models.rs`: Jellyfin DTOs (includes `MediaStreamInfo` for subtitle streams)
 - `src/subtitles/client.rs`: OpenSubtitles HTTP wrapper
 - `src/subtitles/models.rs`: OpenSubtitles DTOs
+- `src/seerr/mod.rs`: Jellyseerr/Overseerr module re-exports
+- `src/seerr/client.rs`: Jellyseerr HTTP wrapper (search, requests, status), tests
+- `src/seerr/models.rs`: Jellyseerr DTOs (search results, media requests, status codes)
 - `src/error.rs`: shared app error definitions and conversions
 - `build.rs`: Linux runtime env embedding (`RPATH`, `XKB`)
 
@@ -61,6 +64,7 @@ Examples from this repository:
 - `cargo test config::tests::save_config_persists_and_roundtrips`
 - `cargo test jellyfin::client::tests::normalize_base_url_rejects_empty_input`
 - `cargo test secure_store::tests::stores_and_loads_session_roundtrip`
+- `cargo test seerr::client::tests::normalize_url_strips_api_v1_suffix`
 
 ### Lint and format
 - Format: `cargo fmt --all`
@@ -119,6 +123,7 @@ Examples from this repository:
 ### API and security rules
 - Add Jellyfin endpoints in `src/jellyfin/client.rs`; DTOs in `src/jellyfin/models.rs`.
 - Add OpenSubtitles endpoints in `src/subtitles/client.rs`; DTOs in `src/subtitles/models.rs`.
+- Add Jellyseerr endpoints in `src/seerr/client.rs`; DTOs in `src/seerr/models.rs`.
 - Keep auth header and token handling centralized in client helpers.
 - Treat access tokens, passwords, and API keys as secrets.
 - Never log tokens, auth headers, or signed URLs.
