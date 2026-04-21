@@ -2,9 +2,11 @@ mod actions;
 mod playback;
 mod ui;
 
+use std::time::Instant;
+
 use std::sync::{Arc, Mutex, atomic::AtomicU64};
 
-use eframe::egui;
+use eframe::egui::{self, Color32};
 use tokio::runtime::Runtime;
 
 use crate::{
@@ -27,6 +29,11 @@ const QUICK_EXIT_FALLBACK_SECONDS: u64 = 5;
 const MPV_IPC_TIMEOUT_MS: u64 = 500;
 const WATCHED_COMPLETION_PERCENT: i64 = 90;
 
+const TOAST_TTL_SUCCESS_MS: u128 = 4_000;
+const TOAST_TTL_ERROR_MS: u128 = 6_000;
+const TOAST_TTL_INFO_MS: u128 = 5_000;
+const TOAST_MAX_VISIBLE: usize = 5;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PlayerKind {
     Mpv,
@@ -37,6 +44,21 @@ enum PlayerKind {
 struct MpvPlaybackSnapshot {
     position_secs: f64,
     is_paused: bool,
+}
+
+#[derive(Debug, Clone)]
+struct Toast {
+    id: u64,
+    message: String,
+    kind: ToastKind,
+    created_at: Instant,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ToastKind {
+    Success,
+    Error,
+    Info,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -193,6 +215,7 @@ enum UiMessage {
     SeerrRequestsFailed(String),
     SeerrRequestCreated(String),
     SeerrRequestFailed(String),
+    UpdateAvailable(String),
 }
 
 #[derive(Debug, Clone)]
@@ -285,6 +308,13 @@ pub struct SlimJellyApp {
     seerr_requests: Vec<SeerrRequest>,
     seerr_requests_loading: bool,
     seerr_tab: SeerrTab,
+
+    toasts: Vec<Toast>,
+    next_toast_id: u64,
+    update_check_done: bool,
+
+    theme_accent: Color32,
+    theme_accent_soft: Color32,
 }
 
 impl SlimJellyApp {
@@ -351,6 +381,11 @@ impl SlimJellyApp {
             seerr_requests: Vec::new(),
             seerr_requests_loading: false,
             seerr_tab: SeerrTab::Search,
+            toasts: Vec::new(),
+            next_toast_id: 0,
+            update_check_done: false,
+            theme_accent: Color32::from_rgb(221, 134, 76),
+            theme_accent_soft: Color32::from_rgb(79, 62, 49),
         };
 
         app.try_restore_session();
@@ -388,6 +423,11 @@ impl SlimJellyApp {
         self.load_playlists();
         self.load_last_played();
         self.search_items();
+
+        if !self.update_check_done {
+            self.update_check_done = true;
+            self.check_for_update();
+        }
     }
 
     fn validate_restored_session(&mut self) {
@@ -551,25 +591,51 @@ impl SlimJellyApp {
     }
 }
 
+impl SlimJellyApp {
+    fn push_toast(&mut self, message: impl Into<String>, kind: ToastKind) {
+        let id = self.next_toast_id;
+        self.next_toast_id = self.next_toast_id.wrapping_add(1);
+        self.toasts.push(Toast {
+            id,
+            message: message.into(),
+            kind,
+            created_at: Instant::now(),
+        });
+    }
+
+    fn expire_toasts(&mut self) {
+        self.toasts.retain(|toast| {
+            let ttl = match toast.kind {
+                ToastKind::Success => TOAST_TTL_SUCCESS_MS,
+                ToastKind::Error => TOAST_TTL_ERROR_MS,
+                ToastKind::Info => TOAST_TTL_INFO_MS,
+            };
+            toast.created_at.elapsed().as_millis() < ttl
+        });
+    }
+}
+
 impl eframe::App for SlimJellyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.apply_theme(ctx);
         self.handle_messages();
+        self.expire_toasts();
 
         if self.current_screen == Screen::Login {
             egui::CentralPanel::default().show(ctx, |ui| {
                 self.draw_login(ui);
             });
+            // Keep a compact status bar on login screen only
+            egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
+                ui.add_space(2.0);
+                ui.label(egui::RichText::new(&self.status_line).small().weak());
+                ui.add_space(2.0);
+            });
         } else {
             self.draw_app_shell(ctx);
         }
 
-        egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
-            ui.add_space(2.0);
-            ui.label(egui::RichText::new(&self.status_line).small().weak());
-            ui.add_space(2.0);
-        });
-
+        self.draw_toasts(ctx);
         ctx.request_repaint_after(std::time::Duration::from_millis(80));
     }
 }
@@ -656,8 +722,12 @@ mod tests {
     #[test]
     fn marks_played_when_stop_reaches_completion_threshold() {
         let playback = playback_fixture();
-        assert!(SlimJellyApp::should_mark_played_on_stop(&playback, 90_000_000));
-        assert!(!SlimJellyApp::should_mark_played_on_stop(&playback, 89_000_000));
+        assert!(SlimJellyApp::should_mark_played_on_stop(
+            &playback, 90_000_000
+        ));
+        assert!(!SlimJellyApp::should_mark_played_on_stop(
+            &playback, 89_000_000
+        ));
     }
 
     #[test]

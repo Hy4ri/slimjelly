@@ -190,11 +190,7 @@ impl SlimJellyApp {
             let mut has_context = false;
             self.detail_seasons.clear();
 
-            if let Some(season_id) = item
-                .season_id
-                .clone()
-                .or_else(|| item.parent_id.clone())
-            {
+            if let Some(season_id) = item.season_id.clone().or_else(|| item.parent_id.clone()) {
                 self.detail_selected_season_id = Some(season_id.clone());
                 self.detail_preferred_season_id = Some(season_id.clone());
                 self.detail_episodes.clear();
@@ -1295,7 +1291,8 @@ impl SlimJellyApp {
             return;
         };
         let user_id = self.session.as_ref().map(|session| session.user_id.clone());
-        let should_mark_played = SlimJellyApp::should_mark_played_on_stop(&playback, position_ticks);
+        let should_mark_played =
+            SlimJellyApp::should_mark_played_on_stop(&playback, position_ticks);
         let item_id = playback.item_id;
         let play_session_id = playback.play_session_id;
         let media_source_id = playback.media_source_id;
@@ -1498,7 +1495,10 @@ impl SlimJellyApp {
         let api_key = self.config.subtitles.api_key.trim().to_string();
 
         match save_config(&self.paths, &self.config) {
-            Ok(()) => self.status_line = "Settings saved. Validating OpenSubtitles credentials...".to_string(),
+            Ok(()) => {
+                self.status_line =
+                    "Settings saved. Validating OpenSubtitles credentials...".to_string()
+            }
             Err(err) => self.status_line = format!("Failed to save settings: {err}"),
         }
 
@@ -1509,7 +1509,9 @@ impl SlimJellyApp {
                     Ok(client) => match client.login(&username, &password).await {
                         Ok(_) => Self::push_message(
                             &messages,
-                            UiMessage::ActionDone("OpenSubtitles OpenSubtitles credentials are correct.".to_string()),
+                            UiMessage::ActionDone(
+                                "OpenSubtitles OpenSubtitles credentials are correct.".to_string(),
+                            ),
                         ),
                         Err(err) => Self::push_message(
                             &messages,
@@ -1798,9 +1800,7 @@ impl SlimJellyApp {
                 let body = response.text().await.unwrap_or_default();
                 Self::push_message(
                     &messages,
-                    UiMessage::SubtitleDownloadFailed(format!(
-                        "Server returned {status}: {body}"
-                    )),
+                    UiMessage::SubtitleDownloadFailed(format!("Server returned {status}: {body}")),
                 );
                 return;
             }
@@ -1818,7 +1818,13 @@ impl SlimJellyApp {
 
             let safe_name = display_title
                 .chars()
-                .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '_' })
+                .map(|c| {
+                    if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                        c
+                    } else {
+                        '_'
+                    }
+                })
                 .collect::<String>();
             let temp_path =
                 std::env::temp_dir().join(format!("slimjelly-serversub-{safe_name}.srt"));
@@ -1849,10 +1855,7 @@ impl SlimJellyApp {
     // -----------------------------------------------------------------------
 
     fn build_seerr_client(&self) -> Result<crate::seerr::SeerrClient, crate::error::AppError> {
-        crate::seerr::SeerrClient::new(
-            &self.config.seerr.base_url,
-            &self.config.seerr.api_key,
-        )
+        crate::seerr::SeerrClient::new(&self.config.seerr.base_url, &self.config.seerr.api_key)
     }
 
     pub(super) fn seerr_search(&mut self) {
@@ -1902,10 +1905,7 @@ impl SlimJellyApp {
         self.runtime.spawn(async move {
             match client.get_requests(1, 50).await {
                 Ok(response) => {
-                    Self::push_message(
-                        &messages,
-                        UiMessage::SeerrRequestsLoaded(response.results),
-                    );
+                    Self::push_message(&messages, UiMessage::SeerrRequestsLoaded(response.results));
                 }
                 Err(err) => {
                     Self::push_message(&messages, UiMessage::SeerrRequestsFailed(err.to_string()));
@@ -1969,6 +1969,48 @@ impl SlimJellyApp {
                 Err(err) => {
                     Self::push_message(&messages, UiMessage::SeerrRequestFailed(err.to_string()));
                 }
+            }
+        });
+    }
+
+    pub(super) fn check_for_update(&mut self) {
+        let messages = self.messages.clone();
+
+        self.runtime.spawn(async move {
+            let client = match reqwest::Client::builder()
+                .user_agent("slimjelly-update-check")
+                .timeout(std::time::Duration::from_secs(10))
+                .build()
+            {
+                Ok(c) => c,
+                Err(_) => return,
+            };
+
+            let resp = match client
+                .get("https://api.github.com/repos/Hy4ri/slimjelly/releases/latest")
+                .header("Accept", "application/vnd.github+json")
+                .send()
+                .await
+            {
+                Ok(r) if r.status().is_success() => r,
+                _ => return,
+            };
+
+            let body: serde_json::Value = match resp.json().await {
+                Ok(v) => v,
+                Err(_) => return,
+            };
+
+            let tag = match body.get("tag_name").and_then(|v| v.as_str()) {
+                Some(t) => t.to_string(),
+                None => return,
+            };
+
+            let remote_version = tag.trim_start_matches('v');
+            let local_version = env!("CARGO_PKG_VERSION");
+
+            if remote_version != local_version {
+                Self::push_message(&messages, UiMessage::UpdateAvailable(tag));
             }
         });
     }

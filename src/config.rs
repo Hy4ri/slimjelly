@@ -26,6 +26,7 @@ pub struct AppConfig {
     pub playback: PlaybackConfig,
     pub subtitles: SubtitleConfig,
     pub seerr: SeerrConfig,
+    pub theme: ThemeConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,6 +101,24 @@ pub struct SeerrConfig {
     pub api_key: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ThemeConfig {
+    pub accent: AccentPreset,
+    pub dark_mode: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum AccentPreset {
+    Amber,
+    Teal,
+    Violet,
+    Rose,
+    Sky,
+    Lime,
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -109,6 +128,7 @@ impl Default for AppConfig {
             playback: PlaybackConfig::default(),
             subtitles: SubtitleConfig::default(),
             seerr: SeerrConfig::default(),
+            theme: ThemeConfig::default(),
         }
     }
 }
@@ -171,6 +191,37 @@ impl Default for SeerrConfig {
         Self {
             base_url: String::new(),
             api_key: String::new(),
+        }
+    }
+}
+
+impl Default for ThemeConfig {
+    fn default() -> Self {
+        Self {
+            accent: AccentPreset::Amber,
+            dark_mode: true,
+        }
+    }
+}
+
+impl AccentPreset {
+    pub const ALL: [AccentPreset; 6] = [
+        AccentPreset::Amber,
+        AccentPreset::Teal,
+        AccentPreset::Violet,
+        AccentPreset::Rose,
+        AccentPreset::Sky,
+        AccentPreset::Lime,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            AccentPreset::Amber => "Amber",
+            AccentPreset::Teal => "Teal",
+            AccentPreset::Violet => "Violet",
+            AccentPreset::Rose => "Rose",
+            AccentPreset::Sky => "Sky",
+            AccentPreset::Lime => "Lime",
         }
     }
 }
@@ -371,7 +422,34 @@ remember_track_choice = false
         assert!(raw.contains("[playback]"));
         assert!(raw.contains("resume_policy = \"always-resume\""));
         assert!(raw.contains("sync_mode = \"adaptive\""));
+        assert!(raw.contains("[theme]"));
+        assert!(raw.contains("accent = \"amber\""));
+        assert!(raw.contains("dark_mode = true"));
 
+        Ok(())
+    }
+
+    #[test]
+    fn theme_config_roundtrips_through_toml() -> Result<(), AppError> {
+        let root = test_root("theme-roundtrip");
+        let paths = test_paths(&root);
+
+        fs::create_dir_all(&paths.config_dir)?;
+        fs::create_dir_all(&paths.data_dir)?;
+
+        let mut config = AppConfig::default();
+        config.theme.accent = AccentPreset::Violet;
+        config.theme.dark_mode = false;
+
+        save_config(&paths, &config)?;
+
+        let raw = fs::read_to_string(&paths.config_file)?;
+        let loaded: AppConfig = toml::from_str(&raw)?;
+
+        assert_eq!(loaded.theme.accent, AccentPreset::Violet);
+        assert!(!loaded.theme.dark_mode);
+
+        cleanup(&root);
         Ok(())
     }
 }

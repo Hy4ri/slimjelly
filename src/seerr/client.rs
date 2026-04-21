@@ -34,11 +34,7 @@ impl SeerrClient {
     }
 
     /// Search for movies and TV shows.
-    pub async fn search(
-        &self,
-        query: &str,
-        page: i32,
-    ) -> Result<SeerrSearchResponse, AppError> {
+    pub async fn search(&self, query: &str, page: i32) -> Result<SeerrSearchResponse, AppError> {
         let url = format!("{}/api/v1/search", self.base_url);
         let response = self
             .client
