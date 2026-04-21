@@ -804,7 +804,7 @@ impl SlimJellyApp {
             Screen::Details => {
                 pick_from(&self.detail_related).or_else(|| pick_from(&self.detail_episodes))
             }
-            Screen::Admin | Screen::Settings | Screen::Login => None,
+            Screen::Admin | Screen::Settings | Screen::Login | Screen::Requests => None,
         }
     }
 
@@ -1567,6 +1567,7 @@ impl SlimJellyApp {
         self.subtitle_search_results.clear();
         self.subtitle_panel_open = false;
         self.subtitle_os_token = None;
+        self.server_subtitle_streams.clear();
         self.status_line = "Logged out".to_string();
     }
 
@@ -1751,5 +1752,224 @@ impl SlimJellyApp {
         }
         self.subtitle_search_results.clear();
         self.subtitle_panel_open = false;
+    }
+
+    /// Download a subtitle stream from the Jellyfin server to a temp file.
+    pub(super) fn download_server_subtitle(&mut self, stream_index: i32, display_title: String) {
+        let Some(client) = self.active_client() else {
+            return;
+        };
+        let Some(item_id) = self.selected_item.as_ref().and_then(|i| i.id.clone()) else {
+            self.status_line = "No item selected".to_string();
+            return;
+        };
+        let media_source_id = self
+            .detail_media_source
+            .as_ref()
+            .and_then(|m| m.id.clone())
+            .unwrap_or_else(|| item_id.clone());
+
+        let subtitle_url =
+            match client.build_subtitle_url(&item_id, &media_source_id, stream_index, "srt") {
+                Ok(url) => url,
+                Err(err) => {
+                    self.status_line = format!("Failed to build subtitle URL: {err}");
+                    return;
+                }
+            };
+
+        self.status_line = format!("Downloading server subtitle: {display_title}...");
+        let messages = self.messages.clone();
+
+        self.runtime.spawn(async move {
+            let response = match reqwest::get(&subtitle_url).await {
+                Ok(r) => r,
+                Err(err) => {
+                    Self::push_message(
+                        &messages,
+                        UiMessage::SubtitleDownloadFailed(err.to_string()),
+                    );
+                    return;
+                }
+            };
+
+            let status = response.status();
+            if !status.is_success() {
+                let body = response.text().await.unwrap_or_default();
+                Self::push_message(
+                    &messages,
+                    UiMessage::SubtitleDownloadFailed(format!(
+                        "Server returned {status}: {body}"
+                    )),
+                );
+                return;
+            }
+
+            let bytes = match response.bytes().await {
+                Ok(b) => b,
+                Err(err) => {
+                    Self::push_message(
+                        &messages,
+                        UiMessage::SubtitleDownloadFailed(err.to_string()),
+                    );
+                    return;
+                }
+            };
+
+            let safe_name = display_title
+                .chars()
+                .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '_' })
+                .collect::<String>();
+            let temp_path =
+                std::env::temp_dir().join(format!("slimjelly-serversub-{safe_name}.srt"));
+
+            if let Err(err) = std::fs::write(&temp_path, &bytes) {
+                Self::push_message(
+                    &messages,
+                    UiMessage::SubtitleDownloadFailed(format!("Failed to write file: {err}")),
+                );
+                return;
+            }
+
+            let path_str = temp_path.to_string_lossy().to_string();
+            log::info!("server subtitle saved to temp: {path_str}");
+
+            Self::push_message(
+                &messages,
+                UiMessage::SubtitleDownloaded {
+                    file_name: safe_name,
+                    path: path_str,
+                },
+            );
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // Jellyseerr / Overseerr
+    // -----------------------------------------------------------------------
+
+    fn build_seerr_client(&self) -> Result<crate::seerr::SeerrClient, crate::error::AppError> {
+        crate::seerr::SeerrClient::new(
+            &self.config.seerr.base_url,
+            &self.config.seerr.api_key,
+        )
+    }
+
+    pub(super) fn seerr_search(&mut self) {
+        let term = self.seerr_search_term.trim().to_string();
+        if term.is_empty() {
+            self.status_line = "Enter a search term".to_string();
+            return;
+        }
+
+        let client = match self.build_seerr_client() {
+            Ok(c) => c,
+            Err(err) => {
+                self.status_line = format!("Seerr config error: {err}");
+                return;
+            }
+        };
+
+        self.seerr_search_loading = true;
+        self.status_line = "Searching Jellyseerr...".to_string();
+        let messages = self.messages.clone();
+
+        self.runtime.spawn(async move {
+            match client.search(&term, 1).await {
+                Ok(response) => {
+                    Self::push_message(&messages, UiMessage::SeerrSearchLoaded(response.results));
+                }
+                Err(err) => {
+                    Self::push_message(&messages, UiMessage::SeerrSearchFailed(err.to_string()));
+                }
+            }
+        });
+    }
+
+    pub(super) fn seerr_load_requests(&mut self) {
+        let client = match self.build_seerr_client() {
+            Ok(c) => c,
+            Err(err) => {
+                self.status_line = format!("Seerr config error: {err}");
+                return;
+            }
+        };
+
+        self.seerr_requests_loading = true;
+        self.status_line = "Loading requests...".to_string();
+        let messages = self.messages.clone();
+
+        self.runtime.spawn(async move {
+            match client.get_requests(1, 50).await {
+                Ok(response) => {
+                    Self::push_message(
+                        &messages,
+                        UiMessage::SeerrRequestsLoaded(response.results),
+                    );
+                }
+                Err(err) => {
+                    Self::push_message(&messages, UiMessage::SeerrRequestsFailed(err.to_string()));
+                }
+            }
+        });
+    }
+
+    pub(super) fn seerr_request_movie(&mut self, tmdb_id: i64, title: String) {
+        let client = match self.build_seerr_client() {
+            Ok(c) => c,
+            Err(err) => {
+                self.status_line = format!("Seerr config error: {err}");
+                return;
+            }
+        };
+
+        self.status_line = format!("Requesting \"{title}\"...");
+        let messages = self.messages.clone();
+
+        self.runtime.spawn(async move {
+            match client.request_movie(tmdb_id).await {
+                Ok(_) => {
+                    Self::push_message(
+                        &messages,
+                        UiMessage::SeerrRequestCreated(format!("Requested: {title}")),
+                    );
+                }
+                Err(err) => {
+                    Self::push_message(&messages, UiMessage::SeerrRequestFailed(err.to_string()));
+                }
+            }
+        });
+    }
+
+    pub(super) fn seerr_request_tv(
+        &mut self,
+        tmdb_id: i64,
+        title: String,
+        seasons: Option<Vec<i32>>,
+    ) {
+        let client = match self.build_seerr_client() {
+            Ok(c) => c,
+            Err(err) => {
+                self.status_line = format!("Seerr config error: {err}");
+                return;
+            }
+        };
+
+        self.status_line = format!("Requesting \"{title}\"...");
+        let messages = self.messages.clone();
+
+        self.runtime.spawn(async move {
+            match client.request_tv(tmdb_id, seasons).await {
+                Ok(_) => {
+                    Self::push_message(
+                        &messages,
+                        UiMessage::SeerrRequestCreated(format!("Requested: {title}")),
+                    );
+                }
+                Err(err) => {
+                    Self::push_message(&messages, UiMessage::SeerrRequestFailed(err.to_string()));
+                }
+            }
+        });
     }
 }

@@ -2,9 +2,9 @@ use std::{collections::HashSet, sync::atomic::Ordering};
 
 use eframe::egui::{self, Color32, RichText, Stroke, Vec2};
 
-use crate::{config::PreferredPlayer, jellyfin::models::BaseItemDto};
+use crate::{config::PreferredPlayer, jellyfin::models::BaseItemDto, seerr::models::MediaStatus};
 
-use super::{LibrarySection, Screen, SessionView, SlimJellyApp, UiMessage};
+use super::{LibrarySection, Screen, SeerrTab, SessionView, SlimJellyApp, UiMessage};
 
 impl SlimJellyApp {
     fn refresh_media_views_after_item_state_change(
@@ -503,6 +503,22 @@ impl SlimJellyApp {
                     self.status_line = format!("Related items load failed: {message}");
                 }
                 UiMessage::DetailTechLoaded(media) => {
+                    self.server_subtitle_streams = media
+                        .as_ref()
+                        .and_then(|m| m.media_streams.as_ref())
+                        .map(|streams| {
+                            streams
+                                .iter()
+                                .filter(|s| {
+                                    s.r#type
+                                        .as_deref()
+                                        .map(|t| t.eq_ignore_ascii_case("Subtitle"))
+                                        .unwrap_or(false)
+                                })
+                                .cloned()
+                                .collect()
+                        })
+                        .unwrap_or_default();
                     self.detail_media_source = media;
                 }
                 UiMessage::DetailTechFailed(message) => {
@@ -784,7 +800,21 @@ impl SlimJellyApp {
                     self.status_line = format!("Delete library failed: {message}");
                 }
                 UiMessage::SubtitleSearchResults(results) => {
-                    self.subtitle_search_results = results;
+                    let mut sorted = results;
+                    sorted.sort_by(|a, b| {
+                        let dl_a = a
+                            .attributes
+                            .as_ref()
+                            .and_then(|attr| attr.download_count)
+                            .unwrap_or(0);
+                        let dl_b = b
+                            .attributes
+                            .as_ref()
+                            .and_then(|attr| attr.download_count)
+                            .unwrap_or(0);
+                        dl_b.cmp(&dl_a)
+                    });
+                    self.subtitle_search_results = sorted;
                     self.subtitle_search_loading = false;
                     self.status_line = format!(
                         "Found {}",
@@ -805,6 +835,38 @@ impl SlimJellyApp {
                 }
                 UiMessage::SubtitleDownloadFailed(message) => {
                     self.status_line = format!("Subtitle download failed: {message}");
+                }
+                UiMessage::SeerrSearchLoaded(results) => {
+                    self.seerr_search_loading = false;
+                    self.status_line = format!(
+                        "Found {}",
+                        Self::count_text(results.len(), "result", "results")
+                    );
+                    self.seerr_search_results = results;
+                }
+                UiMessage::SeerrSearchFailed(message) => {
+                    self.seerr_search_loading = false;
+                    self.status_line = format!("Seerr search failed: {message}");
+                }
+                UiMessage::SeerrRequestsLoaded(requests) => {
+                    self.seerr_requests_loading = false;
+                    self.status_line = format!(
+                        "Loaded {}",
+                        Self::count_text(requests.len(), "request", "requests")
+                    );
+                    self.seerr_requests = requests;
+                }
+                UiMessage::SeerrRequestsFailed(message) => {
+                    self.seerr_requests_loading = false;
+                    self.status_line = format!("Failed to load requests: {message}");
+                }
+                UiMessage::SeerrRequestCreated(message) => {
+                    self.status_line = message;
+                    // Refresh search results to update status badges
+                    self.seerr_search();
+                }
+                UiMessage::SeerrRequestFailed(message) => {
+                    self.status_line = format!("Request failed: {message}");
                 }
             }
         }
@@ -830,6 +892,7 @@ impl SlimJellyApp {
                         Screen::Libraries => self.draw_libraries(ui),
                         Screen::Collections => self.draw_collections(ui),
                         Screen::Playlists => self.draw_playlists_screen(ui),
+                        Screen::Requests => self.draw_requests(ui),
                         Screen::Admin => self.draw_admin(ui),
                         Screen::Settings => self.draw_settings(ui),
                         Screen::Details => self.draw_details(ui),
@@ -837,6 +900,8 @@ impl SlimJellyApp {
                     });
                 });
         });
+
+        self.draw_subtitle_window(ctx);
     }
 
     fn top_nav_button(&mut self, ui: &mut egui::Ui, label: &str, screen: Screen) {
@@ -913,6 +978,9 @@ impl SlimJellyApp {
                         self.top_nav_button(ui, "Libraries", Screen::Libraries);
                         self.top_nav_button(ui, "Collections", Screen::Collections);
                         self.top_nav_button(ui, "Playlists", Screen::Playlists);
+                        if !self.config.seerr.base_url.trim().is_empty() {
+                            self.top_nav_button(ui, "Requests", Screen::Requests);
+                        }
                         self.top_nav_button(ui, "Settings", Screen::Settings);
                         if self.session.as_ref().map(|s| s.is_admin).unwrap_or(false) {
                             self.top_nav_button(ui, "Admin", Screen::Admin);
@@ -942,6 +1010,9 @@ impl SlimJellyApp {
                     self.top_nav_button(ui, "Libraries", Screen::Libraries);
                     self.top_nav_button(ui, "Collections", Screen::Collections);
                     self.top_nav_button(ui, "Playlists", Screen::Playlists);
+                    if !self.config.seerr.base_url.trim().is_empty() {
+                        self.top_nav_button(ui, "Requests", Screen::Requests);
+                    }
                     self.top_nav_button(ui, "Settings", Screen::Settings);
                     if self.session.as_ref().map(|s| s.is_admin).unwrap_or(false) {
                         self.top_nav_button(ui, "Admin", Screen::Admin);
@@ -988,6 +1059,11 @@ impl SlimJellyApp {
             Screen::Playlists => {
                 if self.playlists.is_empty() {
                     self.load_playlists();
+                }
+            }
+            Screen::Requests => {
+                if self.seerr_requests.is_empty() {
+                    self.seerr_load_requests();
                 }
             }
             Screen::Admin => {
@@ -1987,12 +2063,6 @@ impl SlimJellyApp {
         } else {
             Self::space_s()
         });
-        self.draw_subtitle_panel(ui);
-        ui.add_space(if compact {
-            Self::space_xs()
-        } else {
-            Self::space_s()
-        });
         self.draw_detail_seasons_section(ui, &item);
         ui.add_space(if compact {
             Self::space_xs()
@@ -2899,34 +2969,607 @@ impl SlimJellyApp {
             });
         });
 
+        ui.add_space(12.0);
+        Self::section_frame(ui).show(ui, |ui| {
+            ui.label(RichText::new("Jellyseerr").strong().color(Self::color_info()));
+            ui.label(Self::muted_text("Connect to Jellyseerr or Overseerr for media requests.").small());
+
+            ui.horizontal_wrapped(|ui| {
+                    ui.label("Server URL");
+                    let resp = ui.add(
+                        egui::TextEdit::singleline(&mut self.config.seerr.base_url)
+                            .desired_width(300.0)
+                            .hint_text("http://localhost:5055"),
+                    );
+                    if resp.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        self.save_settings();
+                    }
+            });
+
+            ui.horizontal_wrapped(|ui| {
+                    ui.label("API Key");
+                    let resp = ui.add(
+                        egui::TextEdit::singleline(&mut self.config.seerr.api_key)
+                            .password(true)
+                            .desired_width(300.0),
+                    );
+                    if resp.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        self.save_settings();
+                    }
+            });
+        });
+
         ui.add_space(Self::space_m());
         if ui.add(Self::primary_button("Save Settings")).clicked() {
             self.save_settings();
         }
     }
 
-    fn draw_subtitle_panel(&mut self, ui: &mut egui::Ui) {
+    fn draw_requests(&mut self, ui: &mut egui::Ui) {
+        self.draw_screen_header(
+            ui,
+            "Requests",
+            "Search and request media via Jellyseerr.",
+        );
+
+        // Tab bar
+        ui.horizontal(|ui| {
+            let search_active = self.seerr_tab == SeerrTab::Search;
+            let requests_active = self.seerr_tab == SeerrTab::MyRequests;
+
+            if ui
+                .selectable_label(search_active, RichText::new("Search").strong())
+                .clicked()
+            {
+                self.seerr_tab = SeerrTab::Search;
+            }
+            if ui
+                .selectable_label(requests_active, RichText::new("My Requests").strong())
+                .clicked()
+            {
+                self.seerr_tab = SeerrTab::MyRequests;
+                if self.seerr_requests.is_empty() {
+                    self.seerr_load_requests();
+                }
+            }
+        });
+
+        ui.add_space(Self::space_s());
+
+        match self.seerr_tab {
+            SeerrTab::Search => self.draw_seerr_search(ui),
+            SeerrTab::MyRequests => self.draw_seerr_my_requests(ui),
+        }
+    }
+
+    fn draw_seerr_search(&mut self, ui: &mut egui::Ui) {
+        Self::section_frame(ui).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let search_resp = ui.add(
+                    egui::TextEdit::singleline(&mut self.seerr_search_term)
+                        .desired_width(360.0)
+                        .hint_text("Search movies & TV shows..."),
+                );
+                let enter_pressed =
+                    search_resp.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                if ui.add(Self::primary_button("Search")).clicked() || enter_pressed {
+                    self.seerr_search();
+                }
+                if self.seerr_search_loading {
+                    ui.spinner();
+                }
+            });
+        });
+
+        if self.seerr_search_results.is_empty() && !self.seerr_search_loading {
+            ui.add_space(Self::space_m());
+            Self::section_frame(ui).show(ui, |ui| {
+                ui.label(Self::muted_text(
+                    "Search for movies or TV shows to request them.",
+                ));
+            });
+            return;
+        }
+
+        let results = self.seerr_search_results.clone();
+
+        // Collect request actions to apply after iteration
+        let mut request_movie: Option<(i64, String)> = None;
+        let mut request_tv: Option<(i64, String)> = None;
+
+        ui.add_space(Self::space_s());
+        egui::ScrollArea::vertical()
+            .id_salt("seerr_search_results")
+            .max_height(520.0)
+            .show(ui, |ui| {
+                for result in &results {
+                    let title = result.display_title();
+                    let year = result.year().unwrap_or_default();
+                    let media_type = result
+                        .media_type
+                        .as_deref()
+                        .unwrap_or("unknown");
+                    let overview = result
+                        .overview
+                        .as_deref()
+                        .unwrap_or("")
+                        .trim();
+
+                    let media_status = result
+                        .media_info
+                        .as_ref()
+                        .and_then(|info| info.status)
+                        .map(MediaStatus::from_code)
+                        .unwrap_or(MediaStatus::Unknown);
+
+                    let tmdb_id = result.id.unwrap_or(0);
+
+                    Self::section_frame(ui).show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            // Poster placeholder
+                            if let Some(poster_path) = &result.poster_path {
+                                let poster_url = format!(
+                                    "https://image.tmdb.org/t/p/w92{poster_path}"
+                                );
+                                let key = format!("seerr_poster_{tmdb_id}_{media_type}");
+                                self.draw_remote_thumbnail(ui, &key, &poster_url, 60.0, 90.0);
+                            } else {
+                                Self::draw_image_placeholder(ui, Vec2::new(60.0, 90.0), "No artwork");
+                            }
+
+                            ui.add_space(Self::space_s());
+
+                            ui.vertical(|ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new(&title)
+                                            .strong()
+                                            .size(15.0)
+                                            .color(Color32::from_rgb(240, 245, 250)),
+                                    );
+                                    if !year.is_empty() {
+                                        ui.label(Self::muted_text(format!("({year})")));
+                                    }
+
+                                    // Type badge
+                                    let type_label = match media_type {
+                                        "movie" => "Movie",
+                                        "tv" => "TV",
+                                        other => other,
+                                    };
+                                    ui.label(
+                                        RichText::new(type_label)
+                                            .small()
+                                            .color(Self::color_info()),
+                                    );
+
+                                    // Status badge
+                                    let status_color = match media_status {
+                                        MediaStatus::Available => Self::color_success(),
+                                        MediaStatus::Processing
+                                        | MediaStatus::PartiallyAvailable => {
+                                            Color32::from_rgb(240, 180, 60)
+                                        }
+                                        MediaStatus::Pending => Color32::from_rgb(100, 160, 240),
+                                        MediaStatus::Unknown => Self::color_text_muted(),
+                                    };
+                                    ui.label(
+                                        RichText::new(media_status.label())
+                                            .small()
+                                            .color(status_color),
+                                    );
+                                });
+
+                                if !overview.is_empty() {
+                                    ui.label(
+                                        Self::muted_text(Self::truncate_text(overview, 180))
+                                            .small(),
+                                    );
+                                }
+
+                                ui.add_space(Self::space_xs());
+
+                                // Action button
+                                if media_status == MediaStatus::Unknown && tmdb_id > 0 {
+                                    if media_type == "movie" {
+                                        if ui
+                                            .add(Self::primary_button("Request"))
+                                            .clicked()
+                                        {
+                                            request_movie =
+                                                Some((tmdb_id, title.clone()));
+                                        }
+                                    } else if media_type == "tv"
+                                        && ui
+                                            .add(Self::primary_button("Request All Seasons"))
+                                            .clicked()
+                                    {
+                                        request_tv =
+                                            Some((tmdb_id, title.clone()));
+                                    }
+                                } else if media_status != MediaStatus::Unknown {
+                                    ui.label(
+                                        RichText::new(format!("✓ {}", media_status.label()))
+                                            .small()
+                                            .color(Self::color_success()),
+                                    );
+                                }
+                            });
+                        });
+                    });
+                    ui.add_space(Self::space_xs());
+                }
+            });
+
+        // Apply deferred actions
+        if let Some((id, title)) = request_movie {
+            self.seerr_request_movie(id, title);
+        }
+        if let Some((id, title)) = request_tv {
+            self.seerr_request_tv(id, title, None);
+        }
+    }
+
+    fn draw_seerr_my_requests(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            if ui.add(Self::primary_button("Refresh")).clicked() {
+                self.seerr_load_requests();
+            }
+            if self.seerr_requests_loading {
+                ui.spinner();
+            }
+        });
+
+        if self.seerr_requests.is_empty() && !self.seerr_requests_loading {
+            ui.add_space(Self::space_s());
+            Self::section_frame(ui).show(ui, |ui| {
+                ui.label(Self::muted_text("No requests found."));
+            });
+            return;
+        }
+
+        let requests = self.seerr_requests.clone();
+        ui.add_space(Self::space_s());
+        egui::ScrollArea::vertical()
+            .id_salt("seerr_requests_list")
+            .max_height(520.0)
+            .show(ui, |ui| {
+                for req in &requests {
+                    use crate::seerr::models::RequestStatus;
+
+                    let status = req
+                        .status
+                        .map(RequestStatus::from_code)
+                        .unwrap_or(RequestStatus::Unknown);
+                    let media_type = req
+                        .media_type
+                        .as_deref()
+                        .or_else(|| {
+                            req.media
+                                .as_ref()
+                                .and_then(|m| m.media_type.as_deref())
+                        })
+                        .unwrap_or("unknown");
+                    let tmdb_id = req
+                        .media
+                        .as_ref()
+                        .and_then(|m| m.tmdb_id)
+                        .map(|id| id.to_string())
+                        .unwrap_or_else(|| "–".to_string());
+                    let requested_by = req
+                        .requested_by
+                        .as_ref()
+                        .and_then(|u| u.display_name.clone())
+                        .unwrap_or_else(|| "Unknown".to_string());
+                    let created = req
+                        .created_at
+                        .as_deref()
+                        .and_then(|d| d.get(..10))
+                        .unwrap_or("–");
+
+                    let media_status = req
+                        .media
+                        .as_ref()
+                        .and_then(|m| m.status)
+                        .map(MediaStatus::from_code)
+                        .unwrap_or(MediaStatus::Unknown);
+
+                    Self::section_frame(ui).show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            // Type badge
+                            let type_label = match media_type {
+                                "movie" => "🎬",
+                                "tv" => "📺",
+                                _ => "❓",
+                            };
+                            ui.label(RichText::new(type_label).size(18.0));
+
+                            ui.vertical(|ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new(format!("TMDB {tmdb_id}"))
+                                            .strong()
+                                            .color(Color32::from_rgb(220, 225, 235)),
+                                    );
+
+                                    // Request approval status
+                                    let status_color = match status {
+                                        RequestStatus::Approved => Self::color_success(),
+                                        RequestStatus::Pending => {
+                                            Color32::from_rgb(100, 160, 240)
+                                        }
+                                        RequestStatus::Declined => {
+                                            Color32::from_rgb(210, 78, 95)
+                                        }
+                                        RequestStatus::Unknown => Self::color_text_muted(),
+                                    };
+                                    ui.label(
+                                        RichText::new(status.label())
+                                            .small()
+                                            .color(status_color),
+                                    );
+
+                                    // Media availability
+                                    if media_status != MediaStatus::Unknown {
+                                        let avail_color = match media_status {
+                                            MediaStatus::Available => Self::color_success(),
+                                            MediaStatus::Processing
+                                            | MediaStatus::PartiallyAvailable => {
+                                                Color32::from_rgb(240, 180, 60)
+                                            }
+                                            _ => Self::color_text_muted(),
+                                        };
+                                        ui.label(
+                                            RichText::new(format!("· {}", media_status.label()))
+                                                .small()
+                                                .color(avail_color),
+                                        );
+                                    }
+                                });
+
+                                ui.label(
+                                    Self::muted_text(format!(
+                                        "Requested by {requested_by} on {created}"
+                                    ))
+                                    .small(),
+                                );
+                            });
+                        });
+                    });
+                    ui.add_space(Self::space_xs());
+                }
+            });
+    }
+
+    /// Fetch and cache a remote image by URL (used for TMDB posters).
+    fn draw_remote_thumbnail(
+        &mut self,
+        ui: &mut egui::Ui,
+        key: &str,
+        url: &str,
+        width: f32,
+        height: f32,
+    ) {
+        if let Some(texture) = self.thumbnail_textures.get(key) {
+            let size = Vec2::new(width, height);
+            ui.image(egui::load::SizedTexture::new(texture.id(), size));
+            return;
+        }
+
+        if let Some(image) = self.thumbnail_images.get(key).cloned() {
+            let texture =
+                ui.ctx()
+                    .load_texture(key, image, egui::TextureOptions::LINEAR);
+            self.thumbnail_textures.insert(key.to_string(), texture);
+            return;
+        }
+
+        if self.thumbnail_failed.contains(key) {
+            Self::draw_image_placeholder(ui, Vec2::new(width, height), "No artwork");
+            return;
+        }
+
+        if !self.thumbnail_pending.contains(key) {
+            self.thumbnail_pending.insert(key.to_string());
+            let messages = self.messages.clone();
+            let key_owned = key.to_string();
+            let url_owned = url.to_string();
+            self.runtime.spawn(async move {
+                let client = reqwest::Client::new();
+                match client.get(&url_owned).send().await {
+                    Ok(response) if response.status().is_success() => {
+                        match response.bytes().await {
+                            Ok(bytes) => {
+                                Self::push_message(
+                                    &messages,
+                                    UiMessage::ThumbnailLoaded {
+                                        key: key_owned,
+                                        bytes: bytes.to_vec(),
+                                    },
+                                );
+                            }
+                            Err(_) => {
+                                Self::push_message(
+                                    &messages,
+                                    UiMessage::ThumbnailFailed {
+                                        key: key_owned,
+                                        reason: "Failed to read bytes".to_string(),
+                                    },
+                                );
+                            }
+                        }
+                    }
+                    Ok(response) => {
+                        Self::push_message(
+                            &messages,
+                            UiMessage::ThumbnailFailed {
+                                key: key_owned,
+                                reason: format!("HTTP {}", response.status()),
+                            },
+                        );
+                    }
+                    Err(err) => {
+                        Self::push_message(
+                            &messages,
+                            UiMessage::ThumbnailFailed {
+                                key: key_owned,
+                                reason: err.to_string(),
+                            },
+                        );
+                    }
+                }
+            });
+        }
+
+        Self::draw_image_placeholder(ui, Vec2::new(width, height), "No artwork");
+    }
+
+    /// Floating popup window for subtitle search, server subtitles, and OpenSubtitles results.
+    fn draw_subtitle_window(&mut self, ctx: &egui::Context) {
         if !self.subtitle_panel_open {
             return;
         }
 
-        Self::show_faded_section(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Subtitles").strong().color(Self::color_info()));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.small_button("✕").clicked() {
-                            self.subtitle_panel_open = false;
-                        }
-                    });
-                });
-
-                if let Some(path) = &self.subtitle_temp_path {
+        let mut open = true;
+        egui::Window::new("Subtitles")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(true)
+            .default_width(640.0)
+            .default_height(520.0)
+            .min_width(420.0)
+            .min_height(300.0)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                // Downloaded status
+                if let Some(path) = &self.subtitle_temp_path.clone() {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("✓ Downloaded:").small().strong());
+                        ui.label(
+                            RichText::new("✓ Downloaded:")
+                                .small()
+                                .strong()
+                                .color(Self::color_success()),
+                        );
                         ui.label(Self::muted_text(path.clone()).small());
                     });
                     ui.add_space(Self::space_xs());
+                    ui.separator();
+                    ui.add_space(Self::space_xs());
                 }
+
+                // ── Server Subtitles ──────────────────────────────
+                let server_streams = self.server_subtitle_streams.clone();
+                if !server_streams.is_empty() {
+                    ui.label(
+                        RichText::new("Server Subtitles")
+                            .strong()
+                            .color(Self::color_accent()),
+                    );
+                    ui.label(
+                        Self::muted_text("Subtitle tracks available on the Jellyfin server.")
+                            .small(),
+                    );
+                    ui.add_space(Self::space_xs());
+
+                    egui::ScrollArea::vertical()
+                        .id_salt("server_subtitle_scroll")
+                        .max_height(180.0)
+                        .show(ui, |ui| {
+                            for stream in &server_streams {
+                                let display_title = stream
+                                    .display_title
+                                    .clone()
+                                    .unwrap_or_else(|| "Unknown".to_string());
+                                let lang = stream
+                                    .language
+                                    .clone()
+                                    .unwrap_or_else(|| "--".to_string());
+                                let codec = stream
+                                    .codec
+                                    .clone()
+                                    .unwrap_or_else(|| "--".to_string());
+                                let is_external = stream.is_external.unwrap_or(false);
+                                let is_default = stream.is_default.unwrap_or(false);
+                                let is_forced = stream.is_forced.unwrap_or(false);
+
+                                egui::Frame::group(ui.style())
+                                    .fill(Self::color_surface_alt())
+                                    .stroke(Stroke::new(1.0, Self::color_border()))
+                                    .corner_radius(Self::radius_s())
+                                    .inner_margin(egui::Margin::symmetric(8, 5))
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.vertical(|ui| {
+                                                ui.label(
+                                                    RichText::new(&display_title)
+                                                        .small()
+                                                        .strong(),
+                                                );
+                                                ui.horizontal(|ui| {
+                                                    ui.label(
+                                                        Self::muted_text(format!("Lang: {lang}"))
+                                                            .small(),
+                                                    );
+                                                    ui.label(
+                                                        Self::muted_text(format!(
+                                                            "Codec: {codec}"
+                                                        ))
+                                                        .small(),
+                                                    );
+                                                    if is_external {
+                                                        ui.label(
+                                                            RichText::new("External")
+                                                                .small()
+                                                                .color(Self::color_info()),
+                                                        );
+                                                    }
+                                                    if is_default {
+                                                        ui.label(
+                                                            RichText::new("Default")
+                                                                .small()
+                                                                .color(Self::color_success()),
+                                                        );
+                                                    }
+                                                    if is_forced {
+                                                        ui.label(
+                                                            RichText::new("Forced")
+                                                                .small()
+                                                                .color(Self::color_accent()),
+                                                        );
+                                                    }
+                                                });
+                                            });
+
+                                            ui.with_layout(
+                                                egui::Layout::right_to_left(egui::Align::Center),
+                                                |ui| {
+                                                    if let Some(index) = stream.index {
+                                                        if ui.button("Use").clicked() {
+                                                            self.download_server_subtitle(
+                                                                index,
+                                                                display_title.clone(),
+                                                            );
+                                                        }
+                                                    }
+                                                },
+                                            );
+                                        });
+                                    });
+                            }
+                        });
+
+                    ui.add_space(Self::space_s());
+                    ui.separator();
+                    ui.add_space(Self::space_xs());
+                }
+
+                // ── OpenSubtitles Search ──────────────────────────
+                ui.label(
+                    RichText::new("OpenSubtitles")
+                        .strong()
+                        .color(Self::color_accent()),
+                );
+                ui.add_space(Self::space_xs());
 
                 ui.horizontal(|ui| {
                     ui.label("Language");
@@ -2935,7 +3578,8 @@ impl SlimJellyApp {
                             .desired_width(80.0),
                     );
                     if ui.button("Search").clicked()
-                        || (lang_resp.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+                        || (lang_resp.has_focus()
+                            && ui.input(|i| i.key_pressed(egui::Key::Enter)))
                     {
                         self.search_subtitles();
                     }
@@ -2944,81 +3588,96 @@ impl SlimJellyApp {
                     }
                 });
 
+                ui.add_space(Self::space_xs());
+
                 if self.subtitle_search_results.is_empty() && !self.subtitle_search_loading {
                     ui.label(Self::muted_text("No results"));
-                    return;
-                }
+                } else {
+                    let results = self.subtitle_search_results.clone();
+                    egui::ScrollArea::vertical()
+                        .id_salt("subtitle_results_scroll")
+                        .max_height(480.0)
+                        .show(ui, |ui| {
+                            for result in &results {
+                                let Some(attrs) = &result.attributes else {
+                                    continue;
+                                };
 
-                let results = self.subtitle_search_results.clone();
-                egui::ScrollArea::vertical()
-                    .id_salt("subtitle_results_scroll")
-                    .max_height(240.0)
-                    .show(ui, |ui| {
-                        for result in &results {
-                            let Some(attrs) = &result.attributes else {
-                                continue;
-                            };
+                                let release = attrs
+                                    .release
+                                    .clone()
+                                    .unwrap_or_else(|| "Unknown release".to_string());
+                                let lang =
+                                    attrs.language.clone().unwrap_or_else(|| "--".to_string());
+                                let downloads = attrs.download_count.unwrap_or(0);
+                                let trusted = attrs.from_trusted.unwrap_or(false);
 
-                            let release = attrs
-                                .release
-                                .clone()
-                                .unwrap_or_else(|| "Unknown release".to_string());
-                            let lang = attrs.language.clone().unwrap_or_else(|| "--".to_string());
-                            let downloads = attrs.download_count.unwrap_or(0);
-                            let trusted = attrs.from_trusted.unwrap_or(false);
-
-                            egui::Frame::group(ui.style())
-                                .fill(Self::color_surface_alt())
-                                .stroke(Stroke::new(1.0, Self::color_border()))
-                                .corner_radius(Self::radius_m())
-                                .inner_margin(egui::Margin::symmetric(8, 6))
-                                .show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.vertical(|ui| {
-                                            ui.label(RichText::new(&release).small().strong());
-                                            ui.horizontal(|ui| {
+                                egui::Frame::group(ui.style())
+                                    .fill(Self::color_surface_alt())
+                                    .stroke(Stroke::new(1.0, Self::color_border()))
+                                    .corner_radius(Self::radius_s())
+                                    .inner_margin(egui::Margin::symmetric(8, 5))
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.vertical(|ui| {
                                                 ui.label(
-                                                    Self::muted_text(format!("Lang: {lang}")).small(),
+                                                    RichText::new(&release).small().strong(),
                                                 );
-                                                ui.label(
-                                                    Self::muted_text(format!("DL: {downloads}")).small(),
-                                                );
-                                                if trusted {
+                                                ui.horizontal(|ui| {
                                                     ui.label(
-                                                        RichText::new("✓ Trusted")
-                                                            .small()
-                                                            .color(Self::color_success()),
+                                                        Self::muted_text(format!("Lang: {lang}"))
+                                                            .small(),
                                                     );
-                                                }
+                                                    ui.label(
+                                                        Self::muted_text(format!(
+                                                            "Downloads: {downloads}"
+                                                        ))
+                                                        .small(),
+                                                    );
+                                                    if trusted {
+                                                        ui.label(
+                                                            RichText::new("✓ Trusted")
+                                                                .small()
+                                                                .color(Self::color_success()),
+                                                        );
+                                                    }
+                                                });
                                             });
-                                        });
 
-                                        ui.with_layout(
-                                            egui::Layout::right_to_left(egui::Align::Center),
-                                            |ui| {
-                                                if let Some(files) = &attrs.files {
-                                                    if let Some(file) = files.first() {
-                                                        if let Some(file_id) = file.file_id {
-                                                            let fname = file
-                                                                .file_name
-                                                                .clone()
-                                                                .unwrap_or_else(|| {
-                                                                    format!("{file_id}.srt")
-                                                                });
-                                                            if ui.button("Download").clicked() {
-                                                                self.download_subtitle(
-                                                                    file_id, fname,
-                                                                );
+                                            ui.with_layout(
+                                                egui::Layout::right_to_left(egui::Align::Center),
+                                                |ui| {
+                                                    if let Some(files) = &attrs.files {
+                                                        if let Some(file) = files.first() {
+                                                            if let Some(file_id) = file.file_id {
+                                                                let fname = file
+                                                                    .file_name
+                                                                    .clone()
+                                                                    .unwrap_or_else(|| {
+                                                                        format!("{file_id}.srt")
+                                                                    });
+                                                                if ui
+                                                                    .button("Download")
+                                                                    .clicked()
+                                                                {
+                                                                    self.download_subtitle(
+                                                                        file_id, fname,
+                                                                    );
+                                                                }
                                                             }
                                                         }
                                                     }
-                                                }
-                                            },
-                                        );
+                                                },
+                                            );
+                                        });
                                     });
-                                });
-                        }
-                    });
+                            }
+                        });
+                }
             });
+
+        if !open {
+            self.subtitle_panel_open = false;
+        }
     }
 }

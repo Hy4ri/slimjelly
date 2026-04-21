@@ -143,6 +143,21 @@ pub struct PlaybackInfoResponse {
     pub error_code: Option<String>,
 }
 
+/// A single media stream (video, audio, or subtitle) within a media source.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct MediaStreamInfo {
+    pub index: Option<i32>,
+    pub r#type: Option<String>,
+    pub codec: Option<String>,
+    pub language: Option<String>,
+    pub display_title: Option<String>,
+    pub is_external: Option<bool>,
+    pub is_default: Option<bool>,
+    pub is_forced: Option<bool>,
+    pub path: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct MediaSourceInfo {
@@ -154,6 +169,7 @@ pub struct MediaSourceInfo {
     pub supports_transcoding: Option<bool>,
     pub default_audio_stream_index: Option<i32>,
     pub default_subtitle_stream_index: Option<i32>,
+    pub media_streams: Option<Vec<MediaStreamInfo>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
