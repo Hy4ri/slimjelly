@@ -427,6 +427,26 @@ impl JellyfinClient {
         Ok(url.to_string())
     }
 
+    /// Build a URL to fetch a subtitle stream file from the Jellyfin server.
+    ///
+    /// `format` is the desired output format, e.g. `"srt"`, `"vtt"`, or `"ass"`.
+    pub fn build_subtitle_url(
+        &self,
+        item_id: &str,
+        media_source_id: &str,
+        stream_index: i32,
+        format: &str,
+    ) -> Result<String, AppError> {
+        let path = format!(
+            "Videos/{item_id}/{media_source_id}/Subtitles/{stream_index}/Stream.{format}"
+        );
+        let mut url = self.base_url.join(&path)?;
+        if let Some(token) = self.token() {
+            url.query_pairs_mut().append_pair("api_key", token);
+        }
+        Ok(url.to_string())
+    }
+
     pub fn build_item_image_url(
         &self,
         item_id: &str,

@@ -1567,6 +1567,7 @@ impl SlimJellyApp {
         self.subtitle_search_results.clear();
         self.subtitle_panel_open = false;
         self.subtitle_os_token = None;
+        self.server_subtitle_streams.clear();
         self.status_line = "Logged out".to_string();
     }
 
@@ -1751,6 +1752,96 @@ impl SlimJellyApp {
         }
         self.subtitle_search_results.clear();
         self.subtitle_panel_open = false;
+    }
+
+    /// Download a subtitle stream from the Jellyfin server to a temp file.
+    pub(super) fn download_server_subtitle(&mut self, stream_index: i32, display_title: String) {
+        let Some(client) = self.active_client() else {
+            return;
+        };
+        let Some(item_id) = self.selected_item.as_ref().and_then(|i| i.id.clone()) else {
+            self.status_line = "No item selected".to_string();
+            return;
+        };
+        let media_source_id = self
+            .detail_media_source
+            .as_ref()
+            .and_then(|m| m.id.clone())
+            .unwrap_or_else(|| item_id.clone());
+
+        let subtitle_url =
+            match client.build_subtitle_url(&item_id, &media_source_id, stream_index, "srt") {
+                Ok(url) => url,
+                Err(err) => {
+                    self.status_line = format!("Failed to build subtitle URL: {err}");
+                    return;
+                }
+            };
+
+        self.status_line = format!("Downloading server subtitle: {display_title}...");
+        let messages = self.messages.clone();
+
+        self.runtime.spawn(async move {
+            let response = match reqwest::get(&subtitle_url).await {
+                Ok(r) => r,
+                Err(err) => {
+                    Self::push_message(
+                        &messages,
+                        UiMessage::SubtitleDownloadFailed(err.to_string()),
+                    );
+                    return;
+                }
+            };
+
+            let status = response.status();
+            if !status.is_success() {
+                let body = response.text().await.unwrap_or_default();
+                Self::push_message(
+                    &messages,
+                    UiMessage::SubtitleDownloadFailed(format!(
+                        "Server returned {status}: {body}"
+                    )),
+                );
+                return;
+            }
+
+            let bytes = match response.bytes().await {
+                Ok(b) => b,
+                Err(err) => {
+                    Self::push_message(
+                        &messages,
+                        UiMessage::SubtitleDownloadFailed(err.to_string()),
+                    );
+                    return;
+                }
+            };
+
+            let safe_name = display_title
+                .chars()
+                .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '_' })
+                .collect::<String>();
+            let temp_path =
+                std::env::temp_dir().join(format!("slimjelly-serversub-{safe_name}.srt"));
+
+            if let Err(err) = std::fs::write(&temp_path, &bytes) {
+                Self::push_message(
+                    &messages,
+                    UiMessage::SubtitleDownloadFailed(format!("Failed to write file: {err}")),
+                );
+                return;
+            }
+
+            let path_str = temp_path.to_string_lossy().to_string();
+            log::info!("server subtitle saved to temp: {path_str}");
+
+            Self::push_message(
+                &messages,
+                UiMessage::SubtitleDownloaded {
+                    file_name: safe_name,
+                    path: path_str,
+                },
+            );
+        });
     }
 
     // -----------------------------------------------------------------------

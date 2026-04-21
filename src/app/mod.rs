@@ -13,8 +13,8 @@ use crate::{
     jellyfin::{
         JellyfinClient,
         models::{
-            BaseItemDto, BaseItemDtoQueryResult, MediaSourceInfo, SearchHint, TaskInfo,
-            VirtualFolderInfo,
+            BaseItemDto, BaseItemDtoQueryResult, MediaSourceInfo, MediaStreamInfo, SearchHint,
+            TaskInfo, VirtualFolderInfo,
         },
     },
     secure_store::load_session,
@@ -277,6 +277,7 @@ pub struct SlimJellyApp {
     subtitle_panel_open: bool,
     subtitle_os_token: Option<String>,
     subtitle_temp_path: Option<String>,
+    server_subtitle_streams: Vec<MediaStreamInfo>,
 
     seerr_search_term: String,
     seerr_search_results: Vec<SeerrSearchResult>,
@@ -343,6 +344,7 @@ impl SlimJellyApp {
             subtitle_panel_open: false,
             subtitle_os_token: None,
             subtitle_temp_path: None,
+            server_subtitle_streams: Vec::new(),
             seerr_search_term: String::new(),
             seerr_search_results: Vec::new(),
             seerr_search_loading: false,
