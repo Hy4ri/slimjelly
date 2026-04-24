@@ -776,10 +776,10 @@ impl SlimJellyApp {
             .map(str::to_ascii_lowercase)
             .unwrap_or_default();
 
-        if selected_type == "series" {
-            if let Some(item) = pick_from(&self.detail_episodes) {
-                return Some(item);
-            }
+        if selected_type == "series"
+            && let Some(item) = pick_from(&self.detail_episodes)
+        {
+            return Some(item);
         }
 
         if let Some(item) = pick_from(&self.playlist_items) {
@@ -1108,6 +1108,7 @@ impl SlimJellyApp {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn launch_external_player(
         &mut self,
         item_id: String,
@@ -1175,21 +1176,18 @@ impl SlimJellyApp {
         }
 
         let Some((player_kind, mpv_socket_path, child)) = launched else {
-            if !used_transcode {
-                if let Some(retry_url) = transcode_stream_url {
-                    self.status_line =
-                        "Direct launch failed, retrying with transcode...".to_string();
-                    self.launch_external_player(
-                        item_id,
-                        run_time_ticks,
-                        retry_url,
-                        media_source_id,
-                        play_session_id,
-                        true,
-                        None,
-                    );
-                    return;
-                }
+            if !used_transcode && let Some(retry_url) = transcode_stream_url {
+                self.status_line = "Direct launch failed, retrying with transcode...".to_string();
+                self.launch_external_player(
+                    item_id,
+                    run_time_ticks,
+                    retry_url,
+                    media_source_id,
+                    play_session_id,
+                    true,
+                    None,
+                );
+                return;
             }
 
             self.status_line = format!(
@@ -1310,12 +1308,11 @@ impl SlimJellyApp {
                 Self::push_message(&messages, UiMessage::ProgressFailed(err.to_string()));
             }
 
-            if should_mark_played {
-                if let Some(user_id) = user_id.as_deref() {
-                    if let Err(err) = client.mark_played(user_id, &item_id).await {
-                        Self::push_message(&messages, UiMessage::ProgressFailed(err.to_string()));
-                    }
-                }
+            if should_mark_played
+                && let Some(user_id) = user_id.as_deref()
+                && let Err(err) = client.mark_played(user_id, &item_id).await
+            {
+                Self::push_message(&messages, UiMessage::ProgressFailed(err.to_string()));
             }
 
             Self::push_message(&messages, UiMessage::PlaybackStopped { item_id });
@@ -1399,11 +1396,11 @@ impl SlimJellyApp {
                     break;
                 }
 
-                if let Some(session_id) = play_session_id.as_deref() {
-                    if let Err(err) = client.report_playing_ping(session_id).await {
-                        Self::push_message(&messages, UiMessage::ProgressFailed(err.to_string()));
-                        break;
-                    }
+                if let Some(session_id) = play_session_id.as_deref()
+                    && let Err(err) = client.report_playing_ping(session_id).await
+                {
+                    Self::push_message(&messages, UiMessage::ProgressFailed(err.to_string()));
+                    break;
                 }
 
                 Self::push_message(
@@ -1531,10 +1528,10 @@ impl SlimJellyApp {
         self.progress_generation
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
-        if let Some(playback) = self.playback.as_ref() {
-            if let Some(path) = playback.mpv_socket_path.as_deref() {
-                let _ = std::fs::remove_file(path);
-            }
+        if let Some(playback) = self.playback.as_ref()
+            && let Some(path) = playback.mpv_socket_path.as_deref()
+        {
+            let _ = std::fs::remove_file(path);
         }
 
         if let Err(err) = clear_session(&self.paths.session_file) {

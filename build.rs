@@ -18,11 +18,9 @@ fn configure_linux_runtime() {
     }
 
     if let Ok(xkb_root) = std::env::var("SLIMJELLY_XKB_CONFIG_ROOT") {
-        if !xkb_root.trim().is_empty() {
-            println!(
-                "cargo:rustc-env=SLIMJELLY_XKB_CONFIG_ROOT_DEFAULT={}",
-                xkb_root.trim()
-            );
+        let trimmed = xkb_root.trim();
+        if !trimmed.is_empty() {
+            println!("cargo:rustc-env=SLIMJELLY_XKB_CONFIG_ROOT_DEFAULT={trimmed}");
         }
     }
 }
